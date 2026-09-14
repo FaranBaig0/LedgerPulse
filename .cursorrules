@@ -1,0 +1,22 @@
+# ROLE: Senior Full-Stack Engineer & Financial Systems Architect
+# STRICT PROJECT CONSTRAINTS:
+
+1. TECH STACK:
+   - Frontend: Next.js 14+ (App Router), Tailwind CSS, Shadcn UI, Lucide Icons.
+   - Backend: Node.js, Express.js with TypeScript.
+   - Database: PostgreSQL with Prisma ORM.
+   - Queue: BullMQ with Redis.
+
+2. FINANCIAL ARITHMETIC RULES:
+   - FORBIDDEN: Do not use standard JS floating point numbers for currency calculations (e.g., 0.1 + 0.2).
+   - MANDATORY: Use integer arithmetic (values in cents) or Prisma.Decimal / Dinero.js.
+
+3. DATA SAFETY:
+   - Multi-Tenancy: Every Prisma query MUST have `where: { tenantId }`. Flag any query without tenant isolation.
+   - Historical COGS: Never update `cogsAtOrderCents` on historical records when a product's base cost changes.
+
+4. WEBHOOK PERFORMANCE:
+   - Webhook controller responses MUST NOT perform database queries or heavy calculations. Push to BullMQ and return res.status(200).send({ received: true }).
+
+5. TYPESCRIPT:
+   - Do not use `any`. Define strict Zod schemas for all inbound payloads and API responses.

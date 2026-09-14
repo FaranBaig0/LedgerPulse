@@ -1,0 +1,188 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum ChannelPlatform {
+  SHOPIFY
+  ETSY
+}
+
+enum AdPlatform {
+  META
+  GOOGLE
+  TIKTOK
+}
+
+enum FeeType {
+  TRANSACTION
+  LISTING
+  PAYMENT_PROCESSING
+  GATEWAY_PROCESSING
+  REGULATORY
+  OFFSITE_ADS
+  SHIPPING_LABEL
+}
+
+model Tenant {
+  id              String           @id @default(uuid()) @db.Uuid
+  name            String
+  baseCurrency    String           @default("USD") @db.VarChar(3)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  users           User[]
+  channels        Channel[]
+  products        Product[]
+  orders          Order[]
+  dailyMetrics    DailyMetric[]
+  idempotencyKeys IdempotencyKey[]
+  adSpends        AdSpendDaily[]
+
+  @@map("tenants")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("users")
+}
+
+model Channel {
+  id                    String          @id @default(uuid()) @db.Uuid
+  tenantId              String          @db.Uuid
+  platform              ChannelPlatform
+  storeIdentifier       String // shop domain or etsy shop ID
+  encryptedToken        String          @db.Text
+  encryptedRefreshToken String?         @db.Text
+  tokenExpiresAt        DateTime?
+  isActive              Boolean         @default(true)
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  tenant                Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders                Order[]
+
+  @@unique([tenantId, platform, storeIdentifier])
+  @@map("channels")
+}
+
+model Product {
+  id             String          @id @default(uuid()) @db.Uuid
+  tenantId       String          @db.Uuid
+  sku            String
+  title          String
+  baseCostCents  Int             @default(0) // COGS in smallest unit
+  packagingCents Int             @default(0)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lineItems      OrderLineItem[]
+
+  @@unique([tenantId, sku])
+  @@map("products")
+}
+
+model Order {
+  id                   String          @id @default(uuid()) @db.Uuid
+  tenantId             String          @db.Uuid
+  channelId            String          @db.Uuid
+  platformOrderId      String
+  orderNumber          String
+  grossAmountCents     Int
+  taxAmountCents       Int             @default(0)
+  shippingChargedCents Int             @default(0)
+  currency             String          @db.VarChar(3)
+  orderDate            DateTime
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channel   Channel         @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  lineItems OrderLineItem[]
+  fees      OrderFee[]
+
+  @@unique([tenantId, platformOrderId])
+  @@index([tenantId, orderDate])
+  @@map("orders")
+}
+
+model OrderLineItem {
+  id               String   @id @default(uuid()) @db.Uuid
+  orderId          String   @db.Uuid
+  productId        String?  @db.Uuid
+  sku              String
+  title            String
+  quantity         Int
+  unitPriceCents   Int
+  cogsAtOrderCents Int      @default(0) // Snapshot value of (baseCostCents + packagingCents)
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product          Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@map("order_line_items")
+}
+
+model OrderFee {
+  id            String   @id @default(uuid()) @db.Uuid
+  orderId       String   @db.Uuid
+  feeType       FeeType
+  amountCents   Int
+  currency      String   @db.VarChar(3)
+  externalFeeId String   @default("") @db.VarChar(255)
+  rawFeeDetails Json?    @db.JsonB
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, feeType, externalFeeId])
+  @@map("order_fees")
+}
+
+model AdSpendDaily {
+  id          String     @id @default(uuid()) @db.Uuid
+  tenantId    String     @db.Uuid
+  platform    AdPlatform
+  adAccountId String
+  campaignId  String     @default("") @db.VarChar(255)
+  date        DateTime   @db.Date
+  spendCents  Int
+  currency    String     @db.VarChar(3)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, platform, adAccountId, campaignId, date])
+  @@index([tenantId, date])
+  @@map("ad_spend_daily")
+}
+
+model DailyMetric {
+  id                String   @id @default(uuid()) @db.Uuid
+  tenantId          String   @db.Uuid
+  date              DateTime @db.Date
+  grossRevenueCents BigInt   @default(0)
+  netProfitCents    BigInt   @default(0)
+  totalCogsCents    BigInt   @default(0)
+  totalFeesCents    BigInt   @default(0)
+  totalAdSpendCents BigInt   @default(0)
+  orderCount        Int      @default(0)
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, date])
+  @@map("daily_metrics")
+}
+
+model IdempotencyKey {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  key       String   @unique // Combination: platform + event_id
+  createdAt DateTime @default(now())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("idempotency_keys")
+}
