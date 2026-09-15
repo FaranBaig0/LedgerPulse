@@ -82,4 +82,38 @@ export class BillingController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/billing/subscription
+   * Returns current tenant's active plan tier and subscription status from database
+   */
+  static async getTenantSubscription(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.context?.tenantId) {
+        res.status(401).json({ error: "UNAUTHORIZED", message: "Missing tenant context" });
+        return;
+      }
+
+      const tenantPrisma = getTenantPrisma(req.context.tenantId);
+      const tenant = await tenantPrisma.tenant.findUnique({
+        where: { id: req.context.tenantId },
+        select: {
+          id: true,
+          planTier: true,
+          subscriptionStatus: true
+        }
+      });
+
+      res.status(200).json({
+        success: true,
+        data: {
+          planTier: tenant?.planTier || "STARTER",
+          subscriptionStatus: tenant?.subscriptionStatus || "TRIALING"
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+

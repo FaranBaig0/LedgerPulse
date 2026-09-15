@@ -104,6 +104,16 @@ export class PaddleBillingService {
       }
     }
 
+    // Persist chosen plan tier in PostgreSQL database for this tenant
+    try {
+      await prisma.tenant.update({
+        where: { id: tenantId },
+        data: { planTier: planTier.toUpperCase(), subscriptionStatus: "TRIALING" }
+      });
+    } catch (dbErr) {
+      console.error("[Paddle DB Error] Failed to update tenant planTier:", dbErr);
+    }
+
     return {
       clientToken: PADDLE_CLIENT_TOKEN,
       environment: PADDLE_ENV,
@@ -120,7 +130,14 @@ export class PaddleBillingService {
    * Activates a subscription in LedgerPulse DB after successful Paddle Checkout / Webhook
    */
   static async activateSubscription(tenantId: string, planTier: string): Promise<void> {
-    const tenantPrisma = getTenantPrisma(tenantId);
-    console.log(`[Paddle] Subscription activated for tenant ${tenantId} on tier ${planTier}`);
+    try {
+      await prisma.tenant.update({
+        where: { id: tenantId },
+        data: { planTier: planTier.toUpperCase(), subscriptionStatus: "ACTIVE" }
+      });
+      console.log(`[Paddle DB] Subscription activated for tenant ${tenantId} on tier ${planTier}`);
+    } catch (err) {
+      console.error(`[Paddle DB Error] Failed activating subscription for tenant ${tenantId}:`, err);
+    }
   }
 }

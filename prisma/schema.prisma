@@ -29,18 +29,20 @@ enum FeeType {
 }
 
 model Tenant {
-  id              String           @id @default(uuid()) @db.Uuid
-  name            String
-  baseCurrency    String           @default("USD") @db.VarChar(3)
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  users           User[]
-  channels        Channel[]
-  products        Product[]
-  orders          Order[]
-  dailyMetrics    DailyMetric[]
-  idempotencyKeys IdempotencyKey[]
-  adSpends        AdSpendDaily[]
+  id                 String           @id @default(uuid()) @db.Uuid
+  name               String
+  baseCurrency       String           @default("USD") @db.VarChar(3)
+  planTier           String           @default("STARTER")
+  subscriptionStatus String           @default("TRIALING")
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  users              User[]
+  channels           Channel[]
+  products           Product[]
+  orders             Order[]
+  dailyMetrics       DailyMetric[]
+  idempotencyKeys    IdempotencyKey[]
+  adSpends           AdSpendDaily[]
 
   @@map("tenants")
 }

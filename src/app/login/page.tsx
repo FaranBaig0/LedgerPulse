@@ -33,6 +33,11 @@ export default function LoginPage() {
         if (json.data.tenant?.baseCurrency) {
           localStorage.setItem("selectedCurrency", json.data.tenant.baseCurrency);
         }
+        if (json.data.tenant?.planTier) {
+          localStorage.setItem("activePlanTier", json.data.tenant.planTier.toUpperCase());
+        } else {
+          localStorage.removeItem("activePlanTier");
+        }
         router.push("/analytics");
       } else {
         setError(json.message || "Invalid email or password");

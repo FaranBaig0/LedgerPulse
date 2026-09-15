@@ -133,11 +133,29 @@ export default function BillingPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    const savedTier = localStorage.getItem("activePlanTier");
-    if (savedTier) {
-      const found = PLANS.find((p) => p.tier === savedTier);
-      if (found) setActivePlan(found);
-    }
+    const fetchSubscription = async () => {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      if (!token) return;
+      try {
+        const res = await fetch("http://localhost:4000/api/v1/billing/subscription", {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const json = await res.json();
+          const dbTier = json.data?.planTier;
+          if (dbTier) {
+            const found = PLANS.find((p) => p.tier === dbTier);
+            if (found) {
+              setActivePlan(found);
+              localStorage.setItem("activePlanTier", dbTier);
+            }
+          }
+        }
+      } catch {
+        console.warn("Could not fetch tenant subscription from DB");
+      }
+    };
+    fetchSubscription();
   }, []);
 
   const openPaddleCheckout = (plan: PlanCardInfo) => {

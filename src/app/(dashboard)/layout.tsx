@@ -97,6 +97,8 @@ export default function DashboardLayout({
 
   const handleLogout = () => {
     localStorage.removeItem("token");
+    localStorage.removeItem("activePlanTier");
+    localStorage.removeItem("selectedCurrency");
     setIsLoggedIn(false);
     setUserInfo(null);
     router.push("/login");

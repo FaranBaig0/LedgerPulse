@@ -64,6 +64,8 @@ export class AuthController {
               id: true,
               name: true,
               baseCurrency: true,
+              planTier: true,
+              subscriptionStatus: true,
               createdAt: true
             }
           }

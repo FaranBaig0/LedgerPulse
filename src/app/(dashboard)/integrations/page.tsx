@@ -63,26 +63,35 @@ function IntegrationsContent() {
 
   const fetchConnectedChannels = async () => {
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    const savedTier = typeof window !== "undefined" ? localStorage.getItem("activePlanTier") : "GROWTH";
-    if (savedTier) setActivePlanTier(savedTier.toUpperCase());
-
     if (!token) {
       setLoading(false);
       return;
     }
 
     try {
-      const response = await fetch("http://localhost:4000/api/v1/auth/channels", {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
-      if (response.ok) {
-        const json = await response.json();
+      const [chRes, subRes] = await Promise.all([
+        fetch("http://localhost:4000/api/v1/auth/channels", {
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        fetch("http://localhost:4000/api/v1/billing/subscription", {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      ]);
+
+      if (chRes.ok) {
+        const json = await chRes.json();
         setChannels(json.data || []);
       }
+      if (subRes.ok) {
+        const subJson = await subRes.json();
+        const dbTier = subJson.data?.planTier;
+        if (dbTier) {
+          setActivePlanTier(dbTier.toUpperCase());
+          localStorage.setItem("activePlanTier", dbTier.toUpperCase());
+        }
+      }
     } catch {
-      console.warn("Unable to fetch channels");
+      console.warn("Unable to fetch channels or subscription status");
     } finally {
       setLoading(false);
     }
