@@ -102,8 +102,11 @@ model Order {
   platformOrderId      String
   orderNumber          String
   grossAmountCents     Int
+  discountAmountCents  Int             @default(0)
+  refundAmountCents    Int             @default(0)
   taxAmountCents       Int             @default(0)
   shippingChargedCents Int             @default(0)
+  shippingOverheadCents Int            @default(0)
   currency             String          @db.VarChar(3)
   orderDate            DateTime
   createdAt            DateTime        @default(now())
@@ -127,6 +130,9 @@ model OrderLineItem {
   title            String
   quantity         Int
   unitPriceCents   Int
+  discountCents    Int      @default(0)
+  refundCents      Int      @default(0)
+  feeCents         Int      @default(0)
   cogsAtOrderCents Int      @default(0) // Snapshot value of (baseCostCents + packagingCents)
   order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product          Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
@@ -154,6 +160,7 @@ model AdSpendDaily {
   platform    AdPlatform
   adAccountId String
   campaignId  String     @default("") @db.VarChar(255)
+  sku         String?    @db.VarChar(255) // Optional SKU for direct product-level ad attribution
   date        DateTime   @db.Date
   spendCents  Int
   currency    String     @db.VarChar(3)
@@ -161,22 +168,25 @@ model AdSpendDaily {
   updatedAt   DateTime   @updatedAt
   tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@unique([tenantId, platform, adAccountId, campaignId, date])
+  @@unique([tenantId, platform, adAccountId, campaignId, date, sku])
   @@index([tenantId, date])
+  @@index([tenantId, sku])
   @@map("ad_spend_daily")
 }
 
 model DailyMetric {
-  id                String   @id @default(uuid()) @db.Uuid
-  tenantId          String   @db.Uuid
-  date              DateTime @db.Date
-  grossRevenueCents BigInt   @default(0)
-  netProfitCents    BigInt   @default(0)
-  totalCogsCents    BigInt   @default(0)
-  totalFeesCents    BigInt   @default(0)
-  totalAdSpendCents BigInt   @default(0)
-  orderCount        Int      @default(0)
-  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id                    String   @id @default(uuid()) @db.Uuid
+  tenantId              String   @db.Uuid
+  date                  DateTime @db.Date
+  grossRevenueCents     BigInt   @default(0)
+  netRevenueCents       BigInt   @default(0)
+  netProfitCents        BigInt   @default(0)
+  totalCogsCents        BigInt   @default(0)
+  totalFeesCents        BigInt   @default(0)
+  shippingOverheadCents BigInt   @default(0)
+  totalAdSpendCents     BigInt   @default(0)
+  orderCount            Int      @default(0)
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, date])
   @@map("daily_metrics")
