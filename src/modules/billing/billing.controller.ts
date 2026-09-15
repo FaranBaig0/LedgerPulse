@@ -115,5 +115,19 @@ export class BillingController {
       next(error);
     }
   }
+
+  /**
+   * POST /api/v1/billing/paddle/webhook
+   * Ingests real-time Paddle Billing webhooks for payment retries, dunning, and cancellations
+   */
+  static async handlePaddleWebhook(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const eventType = req.body?.event_type || "";
+      await PaddleBillingService.handleWebhookEvent(eventType, req.body);
+      res.status(200).json({ success: true, message: "Webhook processed" });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 

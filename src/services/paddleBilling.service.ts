@@ -140,4 +140,41 @@ export class PaddleBillingService {
       console.error(`[Paddle DB Error] Failed activating subscription for tenant ${tenantId}:`, err);
     }
   }
+
+  /**
+   * Process incoming Paddle Webhook Events (transaction.payment_failed, subscription.canceled, etc.)
+   */
+  static async handleWebhookEvent(eventType: string, payload: any): Promise<void> {
+    console.log(`[Paddle Webhook] Processing event: ${eventType}`);
+
+    const tenantId = payload?.data?.custom_data?.tenantId;
+    if (!tenantId) {
+      console.warn(`[Paddle Webhook] Missing tenantId in custom_data for event ${eventType}`);
+      return;
+    }
+
+    try {
+      if (eventType === "transaction.payment_failed" || eventType === "subscription.past_due") {
+        await prisma.tenant.update({
+          where: { id: tenantId },
+          data: { subscriptionStatus: "PAST_DUE" }
+        });
+        console.log(`[Paddle Webhook] Tenant ${tenantId} marked as PAST_DUE (Dunning grace period started)`);
+      } else if (eventType === "subscription.canceled") {
+        await prisma.tenant.update({
+          where: { id: tenantId },
+          data: { subscriptionStatus: "CANCELED" }
+        });
+        console.log(`[Paddle Webhook] Tenant ${tenantId} subscription CANCELED post dunning window`);
+      } else if (eventType === "transaction.completed" || eventType === "subscription.activated") {
+        await prisma.tenant.update({
+          where: { id: tenantId },
+          data: { subscriptionStatus: "ACTIVE" }
+        });
+        console.log(`[Paddle Webhook] Tenant ${tenantId} subscription activated / renewed`);
+      }
+    } catch (err) {
+      console.error(`[Paddle Webhook Error] Failed processing event ${eventType}:`, err);
+    }
+  }
 }
