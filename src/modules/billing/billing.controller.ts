@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { CreateSubscriptionSchema } from "./billing.schema.js";
 import { ShopifyBillingService, BILLING_PLANS, PlanTierKey } from "../../services/shopifyBilling.service.js";
 import { PaddleBillingService } from "../../services/paddleBilling.service.js";
+import { prisma } from "../../lib/prisma.js";
 
 export class BillingController {
   /**
@@ -94,8 +95,7 @@ export class BillingController {
         return;
       }
 
-      const tenantPrisma = getTenantPrisma(req.context.tenantId);
-      const tenant = await tenantPrisma.tenant.findUnique({
+      const tenant = await prisma.tenant.findUnique({
         where: { id: req.context.tenantId },
         select: {
           id: true,
