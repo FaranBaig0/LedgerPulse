@@ -6,5 +6,6 @@ const router = Router();
 
 router.get("/plans", BillingController.getPlans);
 router.post("/subscribe", authenticateTenant, BillingController.subscribe);
+router.post("/paddle/checkout", authenticateTenant, BillingController.createPaddleCheckout);
 
 export default router;

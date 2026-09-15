@@ -1,4 +1,5 @@
 import { prisma, getTenantPrisma } from "../../lib/prisma.js";
+import { decryptToken } from "../../lib/encryption.js";
 import { CreateProductInput, UpdateCogsInput } from "./products.schema.js";
 
 export interface BulkUploadSummary {
@@ -157,5 +158,95 @@ export class ProductsService {
     });
 
     return summary;
+  }
+
+  /**
+   * Sync products directly from active connected Shopify store
+   */
+  static async syncShopifyProducts(tenantId: string) {
+    const channel = await prisma.channel.findFirst({
+      where: {
+        tenantId,
+        platform: "SHOPIFY",
+        isActive: true
+      }
+    });
+
+    if (!channel) {
+      throw new Error("NO_SHOPIFY_CHANNEL");
+    }
+
+    const token = decryptToken(channel.encryptedToken);
+    const shop = channel.storeIdentifier;
+
+    const response = await fetch(`https://${shop}/admin/api/2024-01/products.json`, {
+      headers: {
+        "X-Shopify-Access-Token": token
+      }
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`SHOPIFY_API_ERROR: ${errText}`);
+    }
+
+    const data = (await response.json()) as {
+      products?: Array<{
+        id: number;
+        title: string;
+        image?: { src: string } | null;
+        images?: Array<{ src: string }>;
+        variants?: Array<{
+          id: number;
+          title: string;
+          sku: string | null;
+          price: string;
+        }>;
+      }>;
+    };
+
+    const products = data.products || [];
+    let syncedCount = 0;
+
+    await prisma.$transaction(async (tx) => {
+      for (const p of products) {
+        const imageUrl = p.images?.[0]?.src || p.image?.src || null;
+
+        for (const v of (p.variants || [])) {
+          const sku = v.sku && v.sku.trim().length > 0 ? v.sku.trim() : `SKU-${v.id}`;
+          const title = v.title && v.title !== "Default Title" ? `${p.title} (${v.title})` : p.title;
+          const sellingPriceCents = Math.round(parseFloat(v.price || "0") * 100);
+
+          await tx.product.upsert({
+            where: {
+              tenantId_sku: {
+                tenantId,
+                sku
+              }
+            },
+            update: {
+              title,
+              sellingPriceCents,
+              imageUrl,
+              channel: "SHOPIFY",
+              updatedAt: new Date()
+            },
+            create: {
+              tenantId,
+              sku,
+              title,
+              sellingPriceCents,
+              imageUrl,
+              channel: "SHOPIFY",
+              baseCostCents: 0,
+              packagingCents: 0
+            }
+          });
+          syncedCount++;
+        }
+      }
+    });
+
+    return { syncedCount, totalProducts: products.length };
   }
 }

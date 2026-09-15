@@ -10,5 +10,6 @@ router.get("/", ProductsController.getProducts);
 router.post("/", ProductsController.createProduct);
 router.put("/:id/cogs", ProductsController.updateCogs);
 router.post("/bulk-csv", ProductsController.bulkUploadCsv);
+router.post("/sync-shopify", ProductsController.syncShopify);
 
 export default router;

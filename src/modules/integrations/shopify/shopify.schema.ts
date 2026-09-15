@@ -7,6 +7,7 @@ export const ShopifyInitOAuthQuerySchema = z.object({
 export const ShopifyCallbackQuerySchema = z.object({
   code: z.string().min(1, "Authorization code is required"),
   hmac: z.string().min(1, "HMAC signature is required"),
+  host: z.string().optional(), // Base64-encoded hostname injected by Shopify since 2021 — MUST be included in HMAC computation
   shop: z.string().min(1, "Shop parameter is required"),
   state: z.string().min(1, "State parameter is required"),
   timestamp: z.string().optional()

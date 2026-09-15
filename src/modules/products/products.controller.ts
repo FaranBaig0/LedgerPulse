@@ -98,4 +98,27 @@ export class ProductsController {
       next(error);
     }
   }
+
+  static async syncShopify(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.context?.tenantId) {
+        res.status(401).json({ error: "UNAUTHORIZED", message: "Missing tenant context" });
+        return;
+      }
+
+      const result = await ProductsService.syncShopifyProducts(req.context.tenantId);
+
+      res.status(200).json({
+        success: true,
+        message: `Successfully synced ${result.syncedCount} product variants from Shopify`,
+        data: result
+      });
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message === "NO_SHOPIFY_CHANNEL") {
+        res.status(400).json({ error: "BAD_REQUEST", message: "No active Shopify channel connected for this account" });
+        return;
+      }
+      next(error);
+    }
+  }
 }

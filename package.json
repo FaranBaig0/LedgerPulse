@@ -5,7 +5,10 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "next dev -p 3000",
+    "dev:client": "next dev -p 3000",
+    "dev:server": "tsx watch src/index.ts",
     "dev:backend": "tsx watch src/index.ts",
+    "dev:worker": "tsx watch src/workers/index.ts",
     "build": "next build",
     "build:backend": "tsc",
     "start": "next start",
