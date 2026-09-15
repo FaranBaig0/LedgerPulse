@@ -68,13 +68,13 @@ export class MetaAdsService {
 
         await tenantPrisma.adSpendDaily.upsert({
           where: {
-            tenantId_platform_adAccountId_campaignId_sku_date: {
+            tenantId_platform_adAccountId_campaignId_date_sku: {
               tenantId,
               platform: AdPlatform.META,
               adAccountId: cleanAccountId,
               campaignId: "",
-              sku: "",
-              date: dbDateOnly
+              date: dbDateOnly,
+              sku: ""
             }
           },
           update: {
@@ -150,13 +150,13 @@ export class MetaAdsService {
 
         await tenantPrisma.adSpendDaily.upsert({
           where: {
-            tenantId_platform_adAccountId_campaignId_sku_date: {
+            tenantId_platform_adAccountId_campaignId_date_sku: {
               tenantId,
               platform: AdPlatform.META,
               adAccountId: cleanAccountId,
               campaignId: "",
-              sku: "",
-              date: entryDate
+              date: entryDate,
+              sku: ""
             }
           },
           update: {
