@@ -8,6 +8,7 @@ import shopifyWebhookRoutes from "./modules/webhooks/shopify.webhook.routes.js";
 import productRoutes from "./modules/products/products.routes.js";
 import analyticsRoutes from "./modules/analytics/analytics.routes.js";
 import billingRoutes from "./modules/billing/billing.routes.js";
+import adspendRoutes from "./modules/integrations/adspend.routes.js";
 import { errorHandler } from "./middlewares/error.middleware.js";
 
 const app: Express = express();
@@ -40,6 +41,7 @@ app.use("/api/v1/webhooks/shopify", shopifyWebhookRoutes);
 app.use("/api/v1/products", productRoutes);
 app.use("/api/v1/analytics", analyticsRoutes);
 app.use("/api/v1/billing", billingRoutes);
+app.use("/api/v1/adspend", adspendRoutes);
 
 // Global Error Handler
 app.use(errorHandler);
