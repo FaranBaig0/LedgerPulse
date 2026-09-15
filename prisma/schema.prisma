@@ -160,7 +160,7 @@ model AdSpendDaily {
   platform    AdPlatform
   adAccountId String
   campaignId  String     @default("") @db.VarChar(255)
-  sku         String?    @db.VarChar(255) // Optional SKU for direct product-level ad attribution
+  sku         String     @default("") @db.VarChar(255) // Optional SKU for direct product-level ad attribution
   date        DateTime   @db.Date
   spendCents  Int
   currency    String     @db.VarChar(3)
@@ -168,7 +168,7 @@ model AdSpendDaily {
   updatedAt   DateTime   @updatedAt
   tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@unique([tenantId, platform, adAccountId, campaignId, date, sku])
+  @@unique([tenantId, platform, adAccountId, campaignId, sku, date])
   @@index([tenantId, date])
   @@index([tenantId, sku])
   @@map("ad_spend_daily")
