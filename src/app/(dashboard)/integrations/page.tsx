@@ -2,7 +2,23 @@
 
 import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { Store, ShieldCheck, CheckCircle2, ExternalLink, ArrowRight, AlertCircle } from "lucide-react";
+import Link from "next/link";
+import {
+  Store,
+  ShieldCheck,
+  CheckCircle2,
+  ExternalLink,
+  ArrowRight,
+  AlertCircle,
+  Edit3,
+  Trash2,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  Layers,
+  X,
+  Check
+} from "lucide-react";
 
 interface ChannelItem {
   id: string;
@@ -10,12 +26,34 @@ interface ChannelItem {
   storeIdentifier: string;
   isActive: boolean;
   createdAt: string;
+  updatedAt?: string;
 }
+
+const TIER_LIMITS: Record<string, { limit: number; label: string }> = {
+  STARTER: { limit: 1, label: "1 Store (Shopify or Etsy)" },
+  BASIC: { limit: 1, label: "1 Store (Shopify or Etsy)" },
+  GROWTH: { limit: 3, label: "Up to 3 Channels" },
+  PRO: { limit: 3, label: "Up to 3 Channels" },
+  SCALE: { limit: 6, label: "Up to 6 Channels" },
+  ENTERPRISE: { limit: 999, label: "Unlimited Channels" }
+};
 
 function IntegrationsContent() {
   const [shopifyDomain, setShopifyDomain] = useState("");
   const [channels, setChannels] = useState<ChannelItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activePlanTier, setActivePlanTier] = useState<string>("GROWTH");
+
+  // Editing state
+  const [editingChannel, setEditingChannel] = useState<ChannelItem | null>(null);
+  const [editIdentifier, setEditIdentifier] = useState("");
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [syncingShopify, setSyncingShopify] = useState<string | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
+  // Add store modal state
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addPlatform, setAddPlatform] = useState<"SHOPIFY" | "ETSY">("SHOPIFY");
 
   const searchParams = useSearchParams();
   const statusParam = searchParams.get("status");
@@ -25,6 +63,9 @@ function IntegrationsContent() {
 
   const fetchConnectedChannels = async () => {
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const savedTier = typeof window !== "undefined" ? localStorage.getItem("activePlanTier") : "GROWTH";
+    if (savedTier) setActivePlanTier(savedTier.toUpperCase());
+
     if (!token) {
       setLoading(false);
       return;
@@ -51,12 +92,18 @@ function IntegrationsContent() {
     fetchConnectedChannels();
   }, []);
 
-  const shopifyChannel = channels.find((c) => c.platform === "SHOPIFY");
-  const etsyChannel = channels.find((c) => c.platform === "ETSY");
+  const planInfo = TIER_LIMITS[activePlanTier] || TIER_LIMITS.GROWTH;
+  const isUnlimited = planInfo.limit >= 999;
+  const isLimitReached = !isUnlimited && channels.length >= planInfo.limit;
 
   const handleShopifyConnect = (e: React.FormEvent) => {
     e.preventDefault();
     if (!shopifyDomain) return;
+
+    if (isLimitReached) {
+      alert(`Channel limit reached for ${activePlanTier} Plan (${planInfo.label}). Please upgrade on the Billing page to add more stores.`);
+      return;
+    }
 
     let cleanDomain = shopifyDomain.trim().toLowerCase();
     if (!cleanDomain.endsWith(".myshopify.com")) {
@@ -68,21 +115,165 @@ function IntegrationsContent() {
   };
 
   const handleEtsyConnect = () => {
+    if (isLimitReached) {
+      alert(`Channel limit reached for ${activePlanTier} Plan (${planInfo.label}). Please upgrade on the Billing page to add more stores.`);
+      return;
+    }
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     window.location.href = `http://localhost:4000/api/v1/auth/etsy?token=${token}`;
   };
 
+  const handleEditOpen = (channel: ChannelItem) => {
+    setEditingChannel(channel);
+    setEditIdentifier(channel.storeIdentifier);
+  };
+
+  const handleUpdateChannel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingChannel) return;
+
+    setIsUpdating(true);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const response = await fetch(`http://localhost:4000/api/v1/auth/channels/${editingChannel.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          storeIdentifier: editIdentifier.trim()
+        })
+      });
+
+      if (response.ok) {
+        setEditingChannel(null);
+        await fetchConnectedChannels();
+      } else {
+        alert("Failed to update store identifier.");
+      }
+    } catch {
+      alert("Error updating channel.");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleDeleteChannel = async (channelId: string, identifier: string) => {
+    if (!confirm(`Are you sure you want to disconnect ${identifier}? This will halt order and fee syncing for this store.`)) {
+      return;
+    }
+
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const response = await fetch(`http://localhost:4000/api/v1/auth/channels/${channelId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        setChannels(channels.filter((c) => c.id !== channelId));
+      } else {
+        alert("Failed to disconnect store.");
+      }
+    } catch {
+      alert("Error disconnecting store.");
+    }
+  };
+
+  const handleSyncShopifyProducts = async (channelId: string) => {
+    setSyncingShopify(channelId);
+    setSyncMessage(null);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const response = await fetch("http://localhost:4000/api/v1/products/sync-shopify", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const json = await response.json();
+        setSyncMessage(`Synced ${json.data?.syncedCount || 0} product variants successfully!`);
+      } else {
+        setSyncMessage("Catalog sync completed.");
+      }
+    } catch {
+      setSyncMessage("Error syncing catalog.");
+    } finally {
+      setSyncingShopify(null);
+    }
+  };
+
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
+    <div className="max-w-6xl mx-auto space-y-8">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
-          <Store className="h-6 w-6 text-indigo-400" />
-          Sales Channel Integrations & OAuth
-        </h1>
-        <p className="text-sm text-slate-400 mt-1">
-          Connect your Shopify and Etsy stores to enable real-time order webhook ingestion and automated fee deduction tracking.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
+            <Store className="h-7 w-7 text-indigo-400" />
+            Sales Channel Integrations & Multi-Store Management
+          </h1>
+          <p className="text-sm text-slate-400 mt-1">
+            Manage, edit, and connect all your Shopify and Etsy storefronts under your active multi-tenant subscription tier.
+          </p>
+        </div>
+
+        <button
+          onClick={() => setShowAddModal(true)}
+          disabled={isLimitReached}
+          className={`px-4 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-2 shadow-lg ${
+            isLimitReached
+              ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700"
+              : "bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-indigo-500/20"
+          }`}
+        >
+          <Plus className="h-4 w-4" />
+          <span>Connect New Store</span>
+        </button>
+      </div>
+
+      {/* Subscription Tier Capacity Banner */}
+      <div className="glass-card p-5 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="p-3 rounded-2xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+            <Layers className="h-6 w-6" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-extrabold text-white">Active Plan: {activePlanTier}</span>
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                {planInfo.label}
+              </span>
+            </div>
+            <span className="text-xs text-slate-400 mt-0.5 block">
+              Store Channel Utilization:{" "}
+              <strong className="text-white font-mono">{channels.length}</strong> /{" "}
+              <strong className="text-white font-mono">{isUnlimited ? "Unlimited" : planInfo.limit}</strong> connected stores active.
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {isLimitReached && (
+            <Link
+              href="/billing"
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-md hover:from-amber-400 hover:to-orange-400 flex items-center gap-1.5"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Upgrade Tier for More Stores</span>
+            </Link>
+          )}
+
+          {!isLimitReached && (
+            <span className="px-3.5 py-1.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              <span>Channel Capacity Available</span>
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Alert Banner for OAuth Redirect Results */}
@@ -109,63 +300,186 @@ function IntegrationsContent() {
         </div>
       )}
 
-      {/* Grid of Channels */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Shopify Partner OAuth Card */}
+      {syncMessage && (
+        <div className="p-4 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs flex items-center justify-between">
+          <span className="font-semibold">{syncMessage}</span>
+          <button onClick={() => setSyncMessage(null)} className="text-slate-400 hover:text-white">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Section 1: Connected Stores List & Editing */}
+      <div className="space-y-4">
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5 text-emerald-400" />
+          Active Connected Stores ({channels.length})
+        </h2>
+
+        {loading ? (
+          <div className="glass-card p-8 rounded-3xl border border-slate-800 text-center text-xs text-slate-400">
+            Loading sales channels...
+          </div>
+        ) : channels.length === 0 ? (
+          <div className="glass-card p-10 rounded-3xl border border-slate-800 text-center space-y-3">
+            <Store className="h-10 w-10 text-slate-600 mx-auto" />
+            <h3 className="text-base font-bold text-white">No Sales Channels Connected Yet</h3>
+            <p className="text-xs text-slate-400 max-w-md mx-auto">
+              Connect your first Shopify or Etsy store below to begin pulling live orders, COGS calculations, and itemized platform fee deductions.
+            </p>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="mt-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs inline-flex items-center gap-2"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Connect First Store</span>
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {channels.map((channel) => {
+              const isShopify = channel.platform === "SHOPIFY";
+              return (
+                <div
+                  key={channel.id}
+                  className={`glass-card glass-card-hover p-6 rounded-3xl border flex flex-col justify-between space-y-5 transition-all ${
+                    isShopify ? "border-emerald-500/30 bg-emerald-950/10" : "border-amber-500/30 bg-amber-950/10"
+                  }`}
+                >
+                  <div className="space-y-4">
+                    {/* Header Badge */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className={`h-10 w-10 rounded-xl flex items-center justify-center font-bold text-lg border ${
+                            isShopify
+                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                              : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                          }`}
+                        >
+                          {isShopify ? "S" : "E"}
+                        </div>
+                        <div>
+                          <span
+                            className={`text-[10px] font-extrabold uppercase tracking-wider block ${
+                              isShopify ? "text-emerald-400" : "text-amber-400"
+                            }`}
+                          >
+                            {isShopify ? "Shopify OAuth" : "Etsy PKCE"}
+                          </span>
+                          <span className="text-xs font-bold text-white block truncate max-w-[170px]">
+                            {channel.storeIdentifier}
+                          </span>
+                        </div>
+                      </div>
+
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Active
+                      </span>
+                    </div>
+
+                    {/* Metadata Card */}
+                    <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between text-slate-400 text-[11px]">
+                        <span>Platform Type:</span>
+                        <span className="font-semibold text-white">{isShopify ? "Shopify Admin API" : "Etsy Open API v3"}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-400 text-[11px]">
+                        <span>Connected On:</span>
+                        <span className="font-mono text-slate-300">{new Date(channel.createdAt).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions Toolbar */}
+                  <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleEditOpen(channel)}
+                        className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 text-[11px] font-semibold flex items-center gap-1.5 transition-all"
+                        title="Edit store domain / label"
+                      >
+                        <Edit3 className="h-3.5 w-3.5 text-indigo-400" />
+                        <span>Edit</span>
+                      </button>
+
+                      {isShopify && (
+                        <button
+                          onClick={() => handleSyncShopifyProducts(channel.id)}
+                          disabled={syncingShopify === channel.id}
+                          className="px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-[11px] font-semibold flex items-center gap-1.5 transition-all"
+                          title="Trigger Shopify product catalog sync"
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 text-indigo-400 ${syncingShopify === channel.id ? "animate-spin" : ""}`} />
+                          <span>Sync</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => handleDeleteChannel(channel.id, channel.storeIdentifier)}
+                      className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 text-[11px] font-semibold transition-all"
+                      title="Disconnect Store"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Section 2: Store Connection Handshake Section */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
+        {/* Shopify Partner Card */}
         <div className="glass-card p-8 rounded-3xl border border-slate-800 flex flex-col justify-between space-y-6">
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="h-12 w-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center font-bold text-emerald-400 text-xl">
                 S
               </div>
-              {shopifyChannel ? (
-                <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5">
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  Active Connection
-                </span>
-              ) : (
-                <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Official OAuth 2.0
-                </span>
-              )}
+              <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                Official OAuth 2.0
+              </span>
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-white">Shopify Store Connection</h2>
+              <h3 className="text-xl font-bold text-white">Connect Shopify Store</h3>
               <p className="text-xs text-slate-400 mt-1">
-                Sync orders, products, and transaction gateway processing fees automatically via Shopify Webhooks & Admin API.
+                Sync orders, line items, variants, and transaction gateway processing fees automatically via Shopify Webhooks & Admin API.
               </p>
             </div>
 
-            {shopifyChannel ? (
-              <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-2">
-                <div className="text-xs font-semibold text-slate-300">Connected Store Domain:</div>
-                <div className="text-sm font-bold text-emerald-400">{shopifyChannel.storeIdentifier}</div>
-                <div className="text-[11px] text-slate-500">Connected on {new Date(shopifyChannel.createdAt).toLocaleDateString()}</div>
+            <form onSubmit={handleShopifyConnect} className="space-y-3 pt-2">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Shopify Store Domain</label>
+                <input
+                  type="text"
+                  value={shopifyDomain}
+                  onChange={(e) => setShopifyDomain(e.target.value)}
+                  placeholder="my-store-name.myshopify.com"
+                  disabled={isLimitReached}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                  required
+                />
               </div>
-            ) : (
-              <form onSubmit={handleShopifyConnect} className="space-y-3 pt-2">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">Shopify Store Domain</label>
-                  <input
-                    type="text"
-                    value={shopifyDomain}
-                    onChange={(e) => setShopifyDomain(e.target.value)}
-                    placeholder="my-store-name.myshopify.com"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs focus:border-indigo-500 focus:outline-none"
-                    required
-                  />
-                </div>
 
-                <button
-                  type="submit"
-                  className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-xs shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2"
-                >
-                  <span>Connect Shopify Store</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
-              </form>
-            )}
+              <button
+                type="submit"
+                disabled={isLimitReached}
+                className={`w-full py-3 px-4 rounded-xl font-semibold text-xs transition-all flex items-center justify-center gap-2 ${
+                  isLimitReached
+                    ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700"
+                    : "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-500/20"
+                }`}
+              >
+                <span>{isLimitReached ? "Channel Limit Reached (Upgrade Plan)" : "Connect New Shopify Store"}</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            </form>
           </div>
 
           <div className="pt-4 border-t border-slate-800/60 text-[11px] text-slate-500 flex items-center gap-2">
@@ -181,42 +495,32 @@ function IntegrationsContent() {
               <div className="h-12 w-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center font-bold text-amber-400 text-xl">
                 E
               </div>
-              {etsyChannel ? (
-                <span className="px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1.5">
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  Active Connection
-                </span>
-              ) : (
-                <span className="px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                  Open API v3 PKCE
-                </span>
-              )}
+              <span className="px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                Open API v3 PKCE
+              </span>
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-white">Etsy Shop Connection</h2>
+              <h3 className="text-xl font-bold text-white">Connect Etsy Shop</h3>
               <p className="text-xs text-slate-400 mt-1">
                 Calculate exact Etsy 6.5% transaction fees, $0.20 listing cuts, and 3%+$0.25 payment processing deductions via PKCE.
               </p>
             </div>
 
-            {etsyChannel ? (
-              <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-2">
-                <div className="text-xs font-semibold text-slate-300">Connected Etsy Shop ID:</div>
-                <div className="text-sm font-bold text-amber-400">{etsyChannel.storeIdentifier}</div>
-                <div className="text-[11px] text-slate-500">Connected on {new Date(etsyChannel.createdAt).toLocaleDateString()}</div>
-              </div>
-            ) : (
-              <div className="pt-4">
-                <button
-                  onClick={handleEtsyConnect}
-                  className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-semibold text-xs shadow-lg shadow-amber-500/20 transition-all flex items-center justify-center gap-2"
-                >
-                  <span>Connect Etsy Shop via PKCE</span>
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
+            <div className="pt-4">
+              <button
+                onClick={handleEtsyConnect}
+                disabled={isLimitReached}
+                className={`w-full py-3 px-4 rounded-xl font-semibold text-xs transition-all flex items-center justify-center gap-2 ${
+                  isLimitReached
+                    ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700"
+                    : "bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-lg shadow-amber-500/20"
+                }`}
+              >
+                <span>{isLimitReached ? "Channel Limit Reached (Upgrade Plan)" : "Connect Etsy Shop via PKCE"}</span>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
 
           <div className="pt-4 border-t border-slate-800/60 text-[11px] text-slate-500 flex items-center gap-2">
@@ -225,6 +529,180 @@ function IntegrationsContent() {
           </div>
         </div>
       </div>
+
+      {/* EDIT STORE IDENTIFIER MODAL */}
+      {editingChannel && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="glass-card p-6 sm:p-8 rounded-3xl border border-slate-800 max-w-md w-full space-y-6 relative overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <h3 className="text-base font-extrabold text-white flex items-center gap-2">
+                <Edit3 className="h-5 w-5 text-indigo-400" />
+                Edit Store Identifier
+              </h3>
+              <button
+                onClick={() => setEditingChannel(null)}
+                className="p-1 rounded-lg bg-slate-900 text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateChannel} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Store Domain / Identifier ({editingChannel.platform})
+                </label>
+                <input
+                  type="text"
+                  value={editIdentifier}
+                  onChange={(e) => setEditIdentifier(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                  required
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Updates the store reference name on your dashboards and product catalog.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingChannel(null)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-900 text-slate-300 font-semibold text-xs hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdating}
+                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition-all flex items-center gap-2"
+                >
+                  {isUpdating ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  <span>Save Changes</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CONNECT NEW STORE MODAL */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="glass-card p-6 sm:p-8 rounded-3xl border border-slate-800 max-w-lg w-full space-y-6 relative overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <h3 className="text-base font-extrabold text-white flex items-center gap-2">
+                <Plus className="h-5 w-5 text-indigo-400" />
+                Add Sales Channel Connection
+              </h3>
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="p-1 rounded-lg bg-slate-900 text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {isLimitReached ? (
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs space-y-3">
+                <p className="font-semibold">
+                  You have reached the store connection limit ({channels.length} / {planInfo.limit}) for your current{" "}
+                  <strong>{activePlanTier}</strong> subscription plan.
+                </p>
+                <p className="text-slate-400">
+                  Upgrade your plan to unlock more sales channel connections:
+                </p>
+                <ul className="list-disc list-inside space-y-1 text-slate-300 font-mono text-[11px]">
+                  <li>Growth / Pro Plan: Up to 3 Stores</li>
+                  <li>Scale Plan: Up to 6 Stores</li>
+                  <li>Enterprise Plan: Unlimited Stores</li>
+                </ul>
+                <div className="pt-2 flex items-center gap-3">
+                  <Link
+                    href="/billing"
+                    onClick={() => setShowAddModal(false)}
+                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs transition-all inline-flex items-center gap-1.5"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>Go to Billing Page</span>
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setAddPlatform("SHOPIFY")}
+                    className={`p-4 rounded-2xl border text-center transition-all ${
+                      addPlatform === "SHOPIFY"
+                        ? "border-emerald-500 bg-emerald-500/10 text-white font-bold"
+                        : "border-slate-800 bg-slate-900 text-slate-400"
+                    }`}
+                  >
+                    <div className="h-8 w-8 rounded-xl bg-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center font-bold mb-1">
+                      S
+                    </div>
+                    <span className="text-xs">Shopify Store</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAddPlatform("ETSY")}
+                    className={`p-4 rounded-2xl border text-center transition-all ${
+                      addPlatform === "ETSY"
+                        ? "border-amber-500 bg-amber-500/10 text-white font-bold"
+                        : "border-slate-800 bg-slate-900 text-slate-400"
+                    }`}
+                  >
+                    <div className="h-8 w-8 rounded-xl bg-amber-500/20 text-amber-400 mx-auto flex items-center justify-center font-bold mb-1">
+                      E
+                    </div>
+                    <span className="text-xs">Etsy Shop</span>
+                  </button>
+                </div>
+
+                {addPlatform === "SHOPIFY" ? (
+                  <form onSubmit={handleShopifyConnect} className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Shopify Store Domain</label>
+                      <input
+                        type="text"
+                        value={shopifyDomain}
+                        onChange={(e) => setShopifyDomain(e.target.value)}
+                        placeholder="brand-name.myshopify.com"
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs focus:border-indigo-500 focus:outline-none"
+                        required
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-all flex items-center justify-center gap-2"
+                    >
+                      <span>Connect Shopify Store</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  </form>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Authenticate your Etsy Shop via official Open API v3 PKCE handshake.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleEtsyConnect}
+                      className="w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs transition-all flex items-center justify-center gap-2"
+                    >
+                      <span>Authenticate Etsy Shop</span>
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -236,4 +714,3 @@ export default function IntegrationsPage() {
     </Suspense>
   );
 }
-

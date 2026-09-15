@@ -112,4 +112,63 @@ export class AuthController {
       next(error);
     }
   }
+
+  static async updateChannel(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.context) {
+        res.status(401).json({ error: "UNAUTHORIZED", message: "Missing tenant context" });
+        return;
+      }
+      const { id } = req.params;
+      const { storeIdentifier, isActive } = req.body;
+
+      const tenantPrisma = getTenantPrisma(req.context.tenantId);
+      const updated = await tenantPrisma.channel.update({
+        where: { id, tenantId: req.context.tenantId },
+        data: {
+          ...(storeIdentifier ? { storeIdentifier } : {}),
+          ...(typeof isActive === "boolean" ? { isActive } : {})
+        },
+        select: {
+          id: true,
+          platform: true,
+          storeIdentifier: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true
+        }
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "Channel updated successfully",
+        data: updated
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async deleteChannel(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.context) {
+        res.status(401).json({ error: "UNAUTHORIZED", message: "Missing tenant context" });
+        return;
+      }
+      const { id } = req.params;
+
+      const tenantPrisma = getTenantPrisma(req.context.tenantId);
+      await tenantPrisma.channel.delete({
+        where: { id, tenantId: req.context.tenantId }
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "Channel disconnected successfully"
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+
