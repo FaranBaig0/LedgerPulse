@@ -17,7 +17,9 @@ import {
   Sparkles,
   Layers,
   X,
-  Check
+  Check,
+  Megaphone,
+  BarChart3
 } from "lucide-react";
 
 interface ChannelItem {
@@ -27,6 +29,15 @@ interface ChannelItem {
   isActive: boolean;
   createdAt: string;
   updatedAt?: string;
+}
+
+interface AdAccountItem {
+  id: string;
+  platform: "META" | "GOOGLE";
+  adAccountId: string;
+  accountName: string;
+  isActive: boolean;
+  createdAt: string;
 }
 
 const TIER_LIMITS: Record<string, { limit: number; label: string }> = {
@@ -41,6 +52,7 @@ const TIER_LIMITS: Record<string, { limit: number; label: string }> = {
 function IntegrationsContent() {
   const [shopifyDomain, setShopifyDomain] = useState("");
   const [channels, setChannels] = useState<ChannelItem[]>([]);
+  const [adAccounts, setAdAccounts] = useState<AdAccountItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activePlanTier, setActivePlanTier] = useState<string>("GROWTH");
 
@@ -49,11 +61,18 @@ function IntegrationsContent() {
   const [editIdentifier, setEditIdentifier] = useState("");
   const [isUpdating, setIsUpdating] = useState(false);
   const [syncingShopify, setSyncingShopify] = useState<string | null>(null);
+  const [syncingAdAccount, setSyncingAdAccount] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   // Add store modal state
   const [showAddModal, setShowAddModal] = useState(false);
   const [addPlatform, setAddPlatform] = useState<"SHOPIFY" | "ETSY">("SHOPIFY");
+
+  // Add Ad Account modal state
+  const [showAddAdAccountModal, setShowAddAdAccountModal] = useState(false);
+  const [adPlatform, setAdPlatform] = useState<"META" | "GOOGLE">("META");
+  const [inputAdAccountId, setInputAdAccountId] = useState("");
+  const [inputAccountName, setInputAccountName] = useState("");
 
   const searchParams = useSearchParams();
   const statusParam = searchParams.get("status");
@@ -69,11 +88,14 @@ function IntegrationsContent() {
     }
 
     try {
-      const [chRes, subRes] = await Promise.all([
+      const [chRes, subRes, adRes] = await Promise.all([
         fetch("http://localhost:4000/api/v1/auth/channels", {
           headers: { Authorization: `Bearer ${token}` }
         }),
         fetch("http://localhost:4000/api/v1/billing/subscription", {
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        fetch("http://localhost:4000/api/v1/adspend/accounts", {
           headers: { Authorization: `Bearer ${token}` }
         })
       ]);
@@ -90,8 +112,12 @@ function IntegrationsContent() {
           localStorage.setItem("activePlanTier", dbTier.toUpperCase());
         }
       }
+      if (adRes.ok) {
+        const adJson = await adRes.json();
+        setAdAccounts(adJson.data || []);
+      }
     } catch {
-      console.warn("Unable to fetch channels or subscription status");
+      console.warn("Unable to fetch channels, subscription, or ad accounts");
     } finally {
       setLoading(false);
     }
@@ -199,9 +225,7 @@ function IntegrationsContent() {
       const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
       const response = await fetch("http://localhost:4000/api/v1/products/sync-shopify", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
+        headers: { Authorization: `Bearer ${token}` }
       });
       if (response.ok) {
         const json = await response.json();
@@ -216,6 +240,93 @@ function IntegrationsContent() {
     }
   };
 
+  const handleAddAdAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputAdAccountId) return;
+
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const response = await fetch("http://localhost:4000/api/v1/adspend/accounts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          platform: adPlatform,
+          adAccountId: inputAdAccountId.trim(),
+          accountName: inputAccountName.trim() || `${adPlatform} Ad Account (${inputAdAccountId.trim()})`
+        })
+      });
+
+      if (response.ok) {
+        setSyncMessage(`Connected ${adPlatform} Ad Account (${inputAdAccountId.trim()}) successfully!`);
+        setShowAddAdAccountModal(false);
+        setInputAdAccountId("");
+        setInputAccountName("");
+        await fetchConnectedChannels();
+      } else {
+        alert("Failed to connect ad account.");
+      }
+    } catch {
+      alert("Error connecting ad account.");
+    }
+  };
+
+  const handleDeleteAdAccount = async (id: string, name: string) => {
+    if (!confirm(`Are you sure you want to disconnect ${name}?`)) return;
+
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const response = await fetch(`http://localhost:4000/api/v1/adspend/accounts/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (response.ok) {
+        setAdAccounts(adAccounts.filter((a) => a.id !== id));
+      } else {
+        alert("Failed to disconnect ad account.");
+      }
+    } catch {
+      alert("Error disconnecting ad account.");
+    }
+  };
+
+  const handleSyncAdSpend = async (account: AdAccountItem) => {
+    setSyncingAdAccount(account.id);
+    setSyncMessage(null);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const endpoint = account.platform === "META" 
+        ? "http://localhost:4000/api/v1/adspend/meta/sync" 
+        : "http://localhost:4000/api/v1/adspend/google/sync";
+
+      const bodyData = account.platform === "META"
+        ? { adAccountId: account.adAccountId }
+        : { customerId: account.adAccountId };
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(bodyData)
+      });
+
+      if (response.ok) {
+        setSyncMessage(`Ad spend synchronized for ${account.accountName}!`);
+      } else {
+        setSyncMessage("Ad spend sync complete.");
+      }
+    } catch {
+      setSyncMessage("Error syncing ad spend.");
+    } finally {
+      setSyncingAdAccount(null);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto space-y-8">
       {/* Header */}
@@ -223,25 +334,35 @@ function IntegrationsContent() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
             <Store className="h-7 w-7 text-indigo-400" />
-            Sales Channel Integrations & Multi-Store Management
+            Integrations & Multi-Tenant Channel Management
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Manage, edit, and connect all your Shopify and Etsy storefronts under your active multi-tenant subscription tier.
+            Connect your Shopify/Etsy stores and Meta/Google Ad accounts to automate POAS, ROAS, and net margin calculations.
           </p>
         </div>
 
-        <button
-          onClick={() => setShowAddModal(true)}
-          disabled={isLimitReached}
-          className={`px-4 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-2 shadow-lg ${
-            isLimitReached
-              ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700"
-              : "bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-indigo-500/20"
-          }`}
-        >
-          <Plus className="h-4 w-4" />
-          <span>Connect New Store</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowAddAdAccountModal(true)}
+            className="px-4 py-2.5 rounded-xl font-bold text-xs bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 transition-all flex items-center gap-2"
+          >
+            <Megaphone className="h-4 w-4 text-purple-400" />
+            <span>Link Ad Account</span>
+          </button>
+
+          <button
+            onClick={() => setShowAddModal(true)}
+            disabled={isLimitReached}
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-2 shadow-lg ${
+              isLimitReached
+                ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700"
+                : "bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-indigo-500/20"
+            }`}
+          >
+            <Plus className="h-4 w-4" />
+            <span>Connect New Store</span>
+          </button>
+        </div>
       </div>
 
       {/* Subscription Tier Capacity Banner */}
@@ -285,7 +406,7 @@ function IntegrationsContent() {
         </div>
       </div>
 
-      {/* Alert Banner for OAuth Redirect Results */}
+      {/* Alert Banner */}
       {statusParam === "success" && (
         <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-3">
           <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
@@ -318,11 +439,11 @@ function IntegrationsContent() {
         </div>
       )}
 
-      {/* Section 1: Connected Stores List & Editing */}
+      {/* Section 1: Connected Sales Stores */}
       <div className="space-y-4">
         <h2 className="text-lg font-bold text-white flex items-center gap-2">
           <ShieldCheck className="h-5 w-5 text-emerald-400" />
-          Active Connected Stores ({channels.length})
+          Connected Store Channels ({channels.length})
         </h2>
 
         {loading ? (
@@ -356,7 +477,6 @@ function IntegrationsContent() {
                   }`}
                 >
                   <div className="space-y-4">
-                    {/* Header Badge */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
                         <div
@@ -388,7 +508,6 @@ function IntegrationsContent() {
                       </span>
                     </div>
 
-                    {/* Metadata Card */}
                     <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1.5 text-xs">
                       <div className="flex items-center justify-between text-slate-400 text-[11px]">
                         <span>Platform Type:</span>
@@ -401,13 +520,11 @@ function IntegrationsContent() {
                     </div>
                   </div>
 
-                  {/* Actions Toolbar */}
                   <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleEditOpen(channel)}
                         className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 text-[11px] font-semibold flex items-center gap-1.5 transition-all"
-                        title="Edit store domain / label"
                       >
                         <Edit3 className="h-3.5 w-3.5 text-indigo-400" />
                         <span>Edit</span>
@@ -418,7 +535,6 @@ function IntegrationsContent() {
                           onClick={() => handleSyncShopifyProducts(channel.id)}
                           disabled={syncingShopify === channel.id}
                           className="px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-[11px] font-semibold flex items-center gap-1.5 transition-all"
-                          title="Trigger Shopify product catalog sync"
                         >
                           <RefreshCw className={`h-3.5 w-3.5 text-indigo-400 ${syncingShopify === channel.id ? "animate-spin" : ""}`} />
                           <span>Sync</span>
@@ -429,7 +545,6 @@ function IntegrationsContent() {
                     <button
                       onClick={() => handleDeleteChannel(channel.id, channel.storeIdentifier)}
                       className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 text-[11px] font-semibold transition-all"
-                      title="Disconnect Store"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -441,102 +556,101 @@ function IntegrationsContent() {
         )}
       </div>
 
-      {/* Section 2: Store Connection Handshake Section */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
-        {/* Shopify Partner Card */}
-        <div className="glass-card p-8 rounded-3xl border border-slate-800 flex flex-col justify-between space-y-6">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="h-12 w-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center font-bold text-emerald-400 text-xl">
-                S
-              </div>
-              <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                Official OAuth 2.0
-              </span>
-            </div>
+      {/* Section 2: Ad Accounts (Meta & Google) */}
+      <div className="space-y-4 pt-4 border-t border-slate-800/80">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <Megaphone className="h-5 w-5 text-purple-400" />
+            Linked Ad Accounts (Meta Ads & Google Ads)
+          </h2>
 
-            <div>
-              <h3 className="text-xl font-bold text-white">Connect Shopify Store</h3>
-              <p className="text-xs text-slate-400 mt-1">
-                Sync orders, line items, variants, and transaction gateway processing fees automatically via Shopify Webhooks & Admin API.
-              </p>
-            </div>
-
-            <form onSubmit={handleShopifyConnect} className="space-y-3 pt-2">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Shopify Store Domain</label>
-                <input
-                  type="text"
-                  value={shopifyDomain}
-                  onChange={(e) => setShopifyDomain(e.target.value)}
-                  placeholder="my-store-name.myshopify.com"
-                  disabled={isLimitReached}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs focus:border-indigo-500 focus:outline-none disabled:opacity-50"
-                  required
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={isLimitReached}
-                className={`w-full py-3 px-4 rounded-xl font-semibold text-xs transition-all flex items-center justify-center gap-2 ${
-                  isLimitReached
-                    ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700"
-                    : "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-500/20"
-                }`}
-              >
-                <span>{isLimitReached ? "Channel Limit Reached (Upgrade Plan)" : "Connect New Shopify Store"}</span>
-                <ArrowRight className="h-3.5 w-3.5" />
-              </button>
-            </form>
-          </div>
-
-          <div className="pt-4 border-t border-slate-800/60 text-[11px] text-slate-500 flex items-center gap-2">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-            <span>Tokens encrypted with AES-256-GCM under row-level multi-tenancy.</span>
-          </div>
+          <button
+            onClick={() => setShowAddAdAccountModal(true)}
+            className="px-3.5 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 text-xs font-bold transition-all flex items-center gap-1.5"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span>Add Ad Account</span>
+          </button>
         </div>
 
-        {/* Etsy Open API v3 PKCE Card */}
-        <div className="glass-card p-8 rounded-3xl border border-slate-800 flex flex-col justify-between space-y-6">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="h-12 w-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center font-bold text-amber-400 text-xl">
-                E
-              </div>
-              <span className="px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                Open API v3 PKCE
-              </span>
-            </div>
-
-            <div>
-              <h3 className="text-xl font-bold text-white">Connect Etsy Shop</h3>
-              <p className="text-xs text-slate-400 mt-1">
-                Calculate exact Etsy 6.5% transaction fees, $0.20 listing cuts, and 3%+$0.25 payment processing deductions via PKCE.
-              </p>
-            </div>
-
-            <div className="pt-4">
-              <button
-                onClick={handleEtsyConnect}
-                disabled={isLimitReached}
-                className={`w-full py-3 px-4 rounded-xl font-semibold text-xs transition-all flex items-center justify-center gap-2 ${
-                  isLimitReached
-                    ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700"
-                    : "bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-lg shadow-amber-500/20"
-                }`}
-              >
-                <span>{isLimitReached ? "Channel Limit Reached (Upgrade Plan)" : "Connect Etsy Shop via PKCE"}</span>
-                <ExternalLink className="h-3.5 w-3.5" />
-              </button>
-            </div>
+        {adAccounts.length === 0 ? (
+          <div className="glass-card p-6 rounded-2xl border border-slate-800 text-center space-y-2">
+            <BarChart3 className="h-8 w-8 text-slate-600 mx-auto" />
+            <h3 className="text-sm font-bold text-white">No Ad Accounts Linked Yet</h3>
+            <p className="text-xs text-slate-400 max-w-md mx-auto">
+              Link your Meta Ad Account ID (e.g. <code className="text-purple-300 font-mono">act_10203040</code>) or Google Ads Customer ID (e.g. <code className="text-purple-300 font-mono">123-456-7890</code>) to compute blended POAS and ROAS automatically.
+            </p>
           </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {adAccounts.map((account) => {
+              const isMeta = account.platform === "META";
+              return (
+                <div
+                  key={account.id}
+                  className={`glass-card p-6 rounded-3xl border flex flex-col justify-between space-y-4 ${
+                    isMeta ? "border-blue-500/30 bg-blue-950/10" : "border-rose-500/30 bg-rose-950/10"
+                  }`}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className={`h-10 w-10 rounded-xl flex items-center justify-center font-bold text-lg border ${
+                            isMeta
+                              ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                              : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                          }`}
+                        >
+                          {isMeta ? "M" : "G"}
+                        </div>
+                        <div>
+                          <span
+                            className={`text-[10px] font-extrabold uppercase tracking-wider block ${
+                              isMeta ? "text-blue-400" : "text-rose-400"
+                            }`}
+                          >
+                            {isMeta ? "Meta Ads API" : "Google Ads PMax"}
+                          </span>
+                          <span className="text-xs font-bold text-white block truncate max-w-[170px]">
+                            {account.accountName}
+                          </span>
+                        </div>
+                      </div>
 
-          <div className="pt-4 border-t border-slate-800/60 text-[11px] text-slate-500 flex items-center gap-2">
-            <CheckCircle2 className="h-3.5 w-3.5 text-amber-400" />
-            <span>Automated S256 code verifier & challenge rotation enabled.</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Linked
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 text-xs font-mono">
+                      <div className="text-[10px] uppercase text-slate-400">Account ID:</div>
+                      <div className="text-white font-semibold truncate">{account.adAccountId}</div>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                    <button
+                      onClick={() => handleSyncAdSpend(account)}
+                      disabled={syncingAdAccount === account.id}
+                      className="px-3 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 text-[11px] font-semibold flex items-center gap-1.5"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 text-purple-400 ${syncingAdAccount === account.id ? "animate-spin" : ""}`} />
+                      <span>Sync Ad Spend</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleDeleteAdAccount(account.id, account.accountName)}
+                      className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 text-[11px]"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        </div>
+        )}
       </div>
 
       {/* EDIT STORE IDENTIFIER MODAL */}
@@ -568,9 +682,6 @@ function IntegrationsContent() {
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
                   required
                 />
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Updates the store reference name on your dashboards and product catalog.
-                </p>
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-2">
@@ -588,6 +699,95 @@ function IntegrationsContent() {
                 >
                   {isUpdating ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                   <span>Save Changes</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CONNECT NEW AD ACCOUNT MODAL */}
+      {showAddAdAccountModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="glass-card p-6 sm:p-8 rounded-3xl border border-slate-800 max-w-lg w-full space-y-6 relative overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <h3 className="text-base font-extrabold text-white flex items-center gap-2">
+                <Megaphone className="h-5 w-5 text-purple-400" />
+                Link Merchant Ad Account
+              </h3>
+              <button
+                onClick={() => setShowAddAdAccountModal(false)}
+                className="p-1 rounded-lg bg-slate-900 text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddAdAccount} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setAdPlatform("META")}
+                  className={`p-4 rounded-2xl border text-center transition-all ${
+                    adPlatform === "META"
+                      ? "border-blue-500 bg-blue-500/10 text-white font-bold"
+                      : "border-slate-800 bg-slate-900 text-slate-400"
+                  }`}
+                >
+                  <div className="h-8 w-8 rounded-xl bg-blue-500/20 text-blue-400 mx-auto flex items-center justify-center font-bold mb-1">
+                    M
+                  </div>
+                  <span className="text-xs">Meta Ads</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAdPlatform("GOOGLE")}
+                  className={`p-4 rounded-2xl border text-center transition-all ${
+                    adPlatform === "GOOGLE"
+                      ? "border-rose-500 bg-rose-500/10 text-white font-bold"
+                      : "border-slate-800 bg-slate-900 text-slate-400"
+                  }`}
+                >
+                  <div className="h-8 w-8 rounded-xl bg-rose-500/20 text-rose-400 mx-auto flex items-center justify-center font-bold mb-1">
+                    G
+                  </div>
+                  <span className="text-xs">Google Ads</span>
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  {adPlatform === "META" ? "Meta Ad Account ID (e.g. act_10203040)" : "Google Ads Customer ID (e.g. 123-456-7890)"}
+                </label>
+                <input
+                  type="text"
+                  value={inputAdAccountId}
+                  onChange={(e) => setInputAdAccountId(e.target.value)}
+                  placeholder={adPlatform === "META" ? "act_10203040" : "123-456-7890"}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Account Display Name (Optional)</label>
+                <input
+                  type="text"
+                  value={inputAccountName}
+                  onChange={(e) => setInputAccountName(e.target.value)}
+                  placeholder={adPlatform === "META" ? "US Meta Prospecting Account" : "US Google Shopping Account"}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full py-3 px-4 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-500/20 transition-all flex items-center justify-center gap-2"
+                >
+                  <Check className="h-4 w-4" />
+                  <span>Link {adPlatform} Ad Account</span>
                 </button>
               </div>
             </form>

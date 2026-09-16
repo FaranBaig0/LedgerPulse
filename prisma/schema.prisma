@@ -43,6 +43,7 @@ model Tenant {
   dailyMetrics       DailyMetric[]
   idempotencyKeys    IdempotencyKey[]
   adSpends           AdSpendDaily[]
+  adAccounts         AdAccount[]
 
   @@map("tenants")
 }
@@ -200,4 +201,21 @@ model IdempotencyKey {
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@map("idempotency_keys")
+}
+
+model AdAccount {
+  id                    String     @id @default(uuid()) @db.Uuid
+  tenantId              String     @db.Uuid
+  platform              AdPlatform
+  adAccountId           String     @db.VarChar(255) // e.g., act_1020304050 or 123-456-7890
+  accountName           String     @default("Ad Account") @db.VarChar(255)
+  encryptedToken        String?    @db.Text
+  encryptedRefreshToken String?    @db.Text
+  isActive              Boolean    @default(true)
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+  tenant                Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, platform, adAccountId])
+  @@map("ad_accounts")
 }
