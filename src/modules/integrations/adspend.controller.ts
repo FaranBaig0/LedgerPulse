@@ -175,13 +175,13 @@ export class AdSpendController {
 
         await prisma.adSpendDaily.upsert({
           where: {
-            tenantId_platform_adAccountId_campaignId_date_sku: {
+            tenantId_platform_adAccountId_campaignId_sku_date: {
               tenantId: req.context.tenantId,
               platform: "GOOGLE",
               adAccountId: cleanCustomerId,
               campaignId: "cmp_google_pmax",
-              date: dbDate,
-              sku: ""
+              sku: "",
+              date: dbDate
             }
           },
           update: { spendCents, currency: "USD" },
