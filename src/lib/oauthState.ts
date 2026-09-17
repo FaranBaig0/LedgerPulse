@@ -5,7 +5,7 @@ const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes expiry
 
 export interface OAuthStatePayload {
   tenantId: string;
-  platform: "SHOPIFY" | "ETSY";
+  platform: "SHOPIFY" | "ETSY" | "META" | "GOOGLE";
   nonce: string;
   codeVerifier?: string;
   timestamp: number;
@@ -36,6 +36,40 @@ export function generateOAuthState(payload: Omit<OAuthStatePayload, "timestamp" 
 /**
  * Verifies OAuth state string and returns payload if valid
  */
+export async function verifyOAuthStateAsync(state: string): Promise<OAuthStatePayload> {
+  const parts = state.split(".");
+  if (parts.length !== 2) {
+    throw new Error("INVALID_STATE_FORMAT");
+  }
+
+  const [payloadBase64, signature] = parts;
+
+  const expectedSignature = crypto
+    .createHmac("sha256", STATE_SECRET)
+    .update(payloadBase64)
+    .digest("base64url");
+
+  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+    throw new Error("STATE_HMAC_MISMATCH");
+  }
+
+  const payloadText = Buffer.from(payloadBase64, "base64url").toString("utf8");
+  const payload = JSON.parse(payloadText) as OAuthStatePayload;
+
+  if (Date.now() - payload.timestamp > STATE_TTL_MS) {
+    throw new Error("STATE_EXPIRED");
+  }
+
+  // Nonce Replay Prevention via Redis SET NX (EX 900)
+  const { setNXWithTTL } = await import("./redis.js");
+  const isFirstUse = await setNXWithTTL(`oauth:nonce:${payload.nonce}`, "1", 900);
+  if (!isFirstUse) {
+    throw new Error("NONCE_ALREADY_CONSUMED");
+  }
+
+  return payload;
+}
+
 export function verifyOAuthState(state: string): OAuthStatePayload {
   const parts = state.split(".");
   if (parts.length !== 2) {

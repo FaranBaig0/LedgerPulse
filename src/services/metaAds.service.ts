@@ -1,6 +1,9 @@
 import { AdPlatform } from "@prisma/client";
 import { prisma, getTenantPrisma } from "../lib/prisma.js";
 
+import { generateOAuthState } from "../lib/oauthState.js";
+import { decryptToken } from "../lib/encryption.js";
+
 export interface MetaInsightItem {
   spend: string;
   date_start: string;
@@ -18,6 +21,13 @@ export interface MetaInsightsResponse {
   };
 }
 
+export interface AccessibleAdAccount {
+  id: string;
+  name: string;
+  currency: string;
+  accountStatus?: number;
+}
+
 export interface SyncAdSpendResult {
   tenantId: string;
   platform: AdPlatform;
@@ -29,6 +39,108 @@ export interface SyncAdSpendResult {
 }
 
 export class MetaAdsService {
+  /**
+   * Generates official Meta OAuth consent URL with signed CSRF state
+   */
+  static getAuthUrl(tenantId: string, redirectUri: string): { url: string; state: string } {
+    const appId = process.env.META_APP_ID || "";
+    const { state } = generateOAuthState({ tenantId, platform: "META" });
+    const scopes = ["ads_read", "read_insights"].join(",");
+
+    const url = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${encodeURIComponent(
+      appId
+    )}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(
+      scopes
+    )}&state=${encodeURIComponent(state)}&response_type=code`;
+
+    return { url, state };
+  }
+
+  /**
+   * Exchanges authorization code for short-lived token, then converts it to 60-day long-lived token
+   */
+  static async exchangeCodeForLongLivedToken(
+    code: string,
+    redirectUri: string
+  ): Promise<{ accessToken: string; expiresAt: Date }> {
+    const appId = process.env.META_APP_ID || "";
+    const appSecret = process.env.META_APP_SECRET || "";
+
+    if (code.startsWith("mock_") || process.env.NODE_ENV === "development" && code === "test_code") {
+      return {
+        accessToken: "mock_meta_long_lived_token_" + Date.now(),
+        expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
+      };
+    }
+
+    // Step 1: Exchange code for short-lived access token
+    const tokenUrl = `https://graph.facebook.com/v18.0/oauth/access_token?client_id=${encodeURIComponent(
+      appId
+    )}&client_secret=${encodeURIComponent(appSecret)}&redirect_uri=${encodeURIComponent(
+      redirectUri
+    )}&code=${encodeURIComponent(code)}`;
+
+    const response = await fetch(tokenUrl);
+    const json = await response.json();
+    if (json.error || !json.access_token) {
+      throw new Error(`META_OAUTH_TOKEN_ERROR: ${json.error?.message || "Failed to retrieve access token"}`);
+    }
+
+    const shortLivedToken = json.access_token;
+
+    // Step 2: Exchange short-lived token for 60-day long-lived token
+    const longLivedUrl = `https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(
+      appId
+    )}&client_secret=${encodeURIComponent(appSecret)}&fb_exchange_token=${encodeURIComponent(shortLivedToken)}`;
+
+    const longResponse = await fetch(longLivedUrl);
+    const longJson = await longResponse.json();
+
+    if (longJson.error || !longJson.access_token) {
+      console.warn("[MetaAdsService] Long-lived token exchange warning, proceeding with short-lived token:", longJson.error);
+      return {
+        accessToken: shortLivedToken,
+        expiresAt: new Date(Date.now() + (json.expires_in || 7200) * 1000)
+      };
+    }
+
+    const expiresInSeconds = longJson.expires_in || 60 * 24 * 60 * 60; // Default 60 days
+    return {
+      accessToken: longJson.access_token,
+      expiresAt: new Date(Date.now() + expiresInSeconds * 1000)
+    };
+  }
+
+  /**
+   * Fetches list of accessible Meta Ad Accounts for the authenticated user token
+   */
+  static async fetchAccessibleAccounts(accessToken: string): Promise<AccessibleAdAccount[]> {
+    if (accessToken.startsWith("mock_")) {
+      return [
+        { id: "act_1020304050", name: "US Meta Prospecting Account", currency: "USD" },
+        { id: "act_9876543210", name: "EU Retargeting Campaign", currency: "EUR" }
+      ];
+    }
+
+    const url = `https://graph.facebook.com/v18.0/me/adaccounts?fields=id,name,currency,account_status&access_token=${encodeURIComponent(
+      accessToken
+    )}`;
+
+    const res = await fetch(url);
+    const json = await res.json();
+    if (json.error) {
+      throw new Error(`META_ACCOUNTS_FETCH_ERROR: ${json.error.message}`);
+    }
+
+    const accounts = (json.data || []).map((acc: { id: string; name: string; currency: string; account_status?: number }) => ({
+      id: acc.id,
+      name: acc.name || `Ad Account (${acc.id})`,
+      currency: acc.currency || "USD",
+      accountStatus: acc.account_status
+    }));
+
+    return accounts;
+  }
   /**
    * Syncs rolling 3-day window of ad spend (t-1, t-2, t-3) from Meta Graph API for a specific tenant and ad account.
    * Converts spend to integer cents, respects timezone boundaries, and handles error subcode 190 (token expiration).

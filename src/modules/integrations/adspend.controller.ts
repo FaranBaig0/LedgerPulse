@@ -1,7 +1,12 @@
 import { Request, Response, NextFunction } from "express";
+import crypto from "crypto";
 import { MetaAdsService } from "../../services/metaAds.service.js";
+import { GoogleAdsService } from "../../services/googleAds.service.js";
 import { prisma, getTenantPrisma } from "../../lib/prisma.js";
 import { AdPlatform } from "@prisma/client";
+import { verifyOAuthStateAsync } from "../../lib/oauthState.js";
+import { encryptToken } from "../../lib/encryption.js";
+import { setCacheWithTTL, getCache, deleteCache } from "../../lib/redis.js";
 
 export class AdSpendController {
   /**
@@ -38,8 +43,165 @@ export class AdSpendController {
   }
 
   /**
+   * GET /api/v1/adspend/oauth/meta/url
+   * Generate official Meta OAuth consent URL
+   */
+  static async getMetaAuthUrl(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.context?.tenantId) {
+        res.status(401).json({ error: "UNAUTHORIZED", message: "Missing tenant context" });
+        return;
+      }
+
+      const redirectUri = `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/meta/callback`;
+      const { url } = MetaAdsService.getAuthUrl(req.context.tenantId, redirectUri);
+
+      res.status(200).json({ success: true, url });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/adspend/oauth/meta/callback
+   * OAuth callback for Meta Ads: validates state, exchanges code for long-lived token, fetches ad accounts, stashes setup session in Redis
+   */
+  static async handleMetaCallback(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { code, state, error: oauthError, error_description } = req.query;
+
+      if (oauthError) {
+        res.redirect(`http://localhost:3000/integrations?error=${encodeURIComponent(String(error_description || oauthError))}`);
+        return;
+      }
+
+      if (!code || !state) {
+        res.redirect("http://localhost:3000/integrations?error=MISSING_CODE_OR_STATE");
+        return;
+      }
+
+      const payload = await verifyOAuthStateAsync(String(state));
+      const redirectUri = `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/meta/callback`;
+
+      const tokenData = await MetaAdsService.exchangeCodeForLongLivedToken(String(code), redirectUri);
+      const accounts = await MetaAdsService.fetchAccessibleAccounts(tokenData.accessToken);
+
+      const setupSessionId = crypto.randomUUID();
+      const encryptedAccessToken = encryptToken(tokenData.accessToken);
+
+      const setupPayload = {
+        tenantId: payload.tenantId,
+        platform: "META",
+        encryptedAccessToken,
+        expiresAt: tokenData.expiresAt,
+        accounts
+      };
+
+      await setCacheWithTTL(`oauth:setup:${setupSessionId}`, JSON.stringify(setupPayload), 900); // 15 mins TTL
+
+      res.redirect(`http://localhost:3000/integrations?setupSessionId=${setupSessionId}&platform=META`);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.redirect(`http://localhost:3000/integrations?error=${encodeURIComponent(msg)}`);
+    }
+  }
+
+  /**
+   * GET /api/v1/adspend/oauth/google/url
+   * Generate official Google Ads OAuth consent URL with offline access
+   */
+  static async getGoogleAuthUrl(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.context?.tenantId) {
+        res.status(401).json({ error: "UNAUTHORIZED", message: "Missing tenant context" });
+        return;
+      }
+
+      const redirectUri = `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/google/callback`;
+      const { url } = GoogleAdsService.getAuthUrl(req.context.tenantId, redirectUri);
+
+      res.status(200).json({ success: true, url });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/adspend/oauth/google/callback
+   * OAuth callback for Google Ads: validates state, exchanges code for access & refresh tokens, fetches v18 accounts, stashes session in Redis
+   */
+  static async handleGoogleCallback(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { code, state, error: oauthError } = req.query;
+
+      if (oauthError) {
+        res.redirect(`http://localhost:3000/integrations?error=${encodeURIComponent(String(oauthError))}`);
+        return;
+      }
+
+      if (!code || !state) {
+        res.redirect("http://localhost:3000/integrations?error=MISSING_CODE_OR_STATE");
+        return;
+      }
+
+      const payload = await verifyOAuthStateAsync(String(state));
+      const redirectUri = `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/google/callback`;
+
+      const tokenData = await GoogleAdsService.exchangeCodeForToken(String(code), redirectUri);
+      const accounts = await GoogleAdsService.fetchAccessibleAccounts(tokenData.accessToken);
+
+      const setupSessionId = crypto.randomUUID();
+      const encryptedAccessToken = encryptToken(tokenData.accessToken);
+      const encryptedRefreshToken = tokenData.refreshToken ? encryptToken(tokenData.refreshToken) : undefined;
+
+      const setupPayload = {
+        tenantId: payload.tenantId,
+        platform: "GOOGLE",
+        encryptedAccessToken,
+        encryptedRefreshToken,
+        expiresAt: tokenData.expiresAt,
+        accounts
+      };
+
+      await setCacheWithTTL(`oauth:setup:${setupSessionId}`, JSON.stringify(setupPayload), 900); // 15 mins TTL
+
+      res.redirect(`http://localhost:3000/integrations?setupSessionId=${setupSessionId}&platform=GOOGLE`);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.redirect(`http://localhost:3000/integrations?error=${encodeURIComponent(msg)}`);
+    }
+  }
+
+  /**
+   * GET /api/v1/adspend/setup-session/:sessionId
+   * Retrieve temporary accessible accounts list for dropdown population
+   */
+  static async getSetupAccounts(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { sessionId } = req.params;
+      const cached = await getCache(`oauth:setup:${sessionId}`);
+
+      if (!cached) {
+        res.status(404).json({ error: "SESSION_EXPIRED", message: "Setup session expired or invalid" });
+        return;
+      }
+
+      const session = JSON.parse(cached);
+      res.status(200).json({
+        success: true,
+        data: {
+          platform: session.platform,
+          accounts: session.accounts
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * POST /api/v1/adspend/accounts
-   * Connect a new Meta or Google Ad Account for the authenticated tenant
+   * Finalize linking an ad account for the tenant (supports setupSessionId or direct adAccountId for dev testing)
    */
   static async addAdAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -48,14 +210,35 @@ export class AdSpendController {
         return;
       }
 
-      const { platform, adAccountId, accountName } = req.body;
-      if (!platform || !adAccountId) {
-        res.status(400).json({ error: "BAD_REQUEST", message: "Missing platform or adAccountId" });
-        return;
+      const { platform, adAccountId, accountName, setupSessionId } = req.body;
+      const cleanPlatform = (platform?.toString().toUpperCase() || "META") as AdPlatform;
+
+      let finalAccountId = adAccountId ? adAccountId.trim().replace(/^act_/, "") : "";
+      let finalAccountName = accountName;
+      let encryptedToken: string | null = null;
+      let encryptedRefreshToken: string | null = null;
+
+      if (setupSessionId) {
+        const cached = await getCache(`oauth:setup:${setupSessionId}`);
+        if (cached) {
+          const session = JSON.parse(cached);
+          encryptedToken = session.encryptedAccessToken || null;
+          encryptedRefreshToken = session.encryptedRefreshToken || null;
+
+          if (!finalAccountId && session.accounts && session.accounts.length > 0) {
+            finalAccountId = session.accounts[0].id.replace(/^act_/, "");
+            finalAccountName = session.accounts[0].name;
+          }
+
+          // Delete consumed setup session
+          await deleteCache(`oauth:setup:${setupSessionId}`);
+        }
       }
 
-      const cleanPlatform = (platform.toString().toUpperCase()) as AdPlatform;
-      const cleanAccountId = adAccountId.trim().replace(/^act_/, "");
+      if (!finalAccountId) {
+        res.status(400).json({ error: "BAD_REQUEST", message: "Missing adAccountId or setupSessionId" });
+        return;
+      }
 
       const tenantPrisma = getTenantPrisma(req.context.tenantId);
       const adAccount = await tenantPrisma.adAccount.upsert({
@@ -63,28 +246,38 @@ export class AdSpendController {
           tenantId_platform_adAccountId: {
             tenantId: req.context.tenantId,
             platform: cleanPlatform,
-            adAccountId: cleanAccountId
+            adAccountId: finalAccountId
           }
         },
         update: {
-          accountName: accountName || `${cleanPlatform} Ad Account (${cleanAccountId})`,
+          accountName: finalAccountName || `${cleanPlatform} Ad Account (${finalAccountId})`,
+          encryptedToken: encryptedToken || undefined,
+          encryptedRefreshToken: encryptedRefreshToken || undefined,
           isActive: true
         },
         create: {
           tenantId: req.context.tenantId,
           platform: cleanPlatform,
-          adAccountId: cleanAccountId,
-          accountName: accountName || `${cleanPlatform} Ad Account (${cleanAccountId})`,
+          adAccountId: finalAccountId,
+          accountName: finalAccountName || `${cleanPlatform} Ad Account (${finalAccountId})`,
+          encryptedToken,
+          encryptedRefreshToken,
           isActive: true
         }
       });
 
-      // Auto-trigger initial ad spend sync for this account safely
+      // Auto-trigger initial ad spend sync for this account
       if (cleanPlatform === "META") {
         try {
-          await MetaAdsService.syncTenantAdSpend(req.context.tenantId, cleanAccountId);
+          await MetaAdsService.syncTenantAdSpend(req.context.tenantId, finalAccountId);
         } catch (syncErr) {
-          console.warn(`[AdSpendController] Initial sync warning for ${cleanAccountId}:`, syncErr);
+          console.warn(`[AdSpendController] Initial Meta sync warning for ${finalAccountId}:`, syncErr);
+        }
+      } else if (cleanPlatform === "GOOGLE") {
+        try {
+          await GoogleAdsService.syncTenantAdSpend(req.context.tenantId, finalAccountId);
+        } catch (syncErr) {
+          console.warn(`[AdSpendController] Initial Google sync warning for ${finalAccountId}:`, syncErr);
         }
       }
 
@@ -166,53 +359,16 @@ export class AdSpendController {
       }
 
       const { customerId = "123-456-7890" } = req.body;
-      const refDate = new Date();
-      const cleanCustomerId = customerId.replace(/-/g, "");
 
-      let totalSpend = 0;
-      for (let i = 1; i <= 3; i++) {
-        const d = new Date(refDate);
-        d.setUTCDate(d.getUTCDate() - i);
-        const dbDate = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-        const spendCents = 2400 + i * 350; // $24.00, $27.50, $31.00
-        totalSpend += spendCents;
-
-        await prisma.adSpendDaily.upsert({
-          where: {
-            tenantId_platform_adAccountId_campaignId_sku_date: {
-              tenantId: req.context.tenantId,
-              platform: "GOOGLE",
-              adAccountId: cleanCustomerId,
-              campaignId: "cmp_google_pmax",
-              sku: "",
-              date: dbDate
-            }
-          },
-          update: { spendCents, currency: "USD" },
-          create: {
-            tenantId: req.context.tenantId,
-            platform: "GOOGLE",
-            adAccountId: cleanCustomerId,
-            campaignId: "cmp_google_pmax",
-            date: dbDate,
-            spendCents,
-            currency: "USD",
-            sku: ""
-          }
-        });
-      }
+      const result = await GoogleAdsService.syncTenantAdSpend(
+        req.context.tenantId,
+        customerId
+      );
 
       res.status(200).json({
         success: true,
         message: "Google Ads PMax & Shopping spend synchronized successfully",
-        data: {
-          tenantId: req.context.tenantId,
-          platform: "GOOGLE",
-          adAccountId: cleanCustomerId,
-          status: "SUCCESS",
-          syncedDaysCount: 3,
-          totalSpendCents: totalSpend
-        }
+        data: result
       });
     } catch (error) {
       next(error);

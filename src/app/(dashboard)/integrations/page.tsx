@@ -74,11 +74,19 @@ function IntegrationsContent() {
   const [inputAdAccountId, setInputAdAccountId] = useState("");
   const [inputAccountName, setInputAccountName] = useState("");
 
+  // OAuth Setup Session & Accessible Accounts state
+  const [setupSessionId, setSetupSessionId] = useState<string | null>(null);
+  const [accessibleAccounts, setAccessibleAccounts] = useState<Array<{ id: string; name: string; currency?: string }>>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
+  const [useManualInput, setUseManualInput] = useState<boolean>(false);
+  const [isOAuthLoading, setIsOAuthLoading] = useState<boolean>(false);
+
   const searchParams = useSearchParams();
   const statusParam = searchParams.get("status");
   const platformParam = searchParams.get("platform");
   const storeParam = searchParams.get("store");
   const errorParam = searchParams.get("error");
+  const setupSessionParam = searchParams.get("setupSessionId");
 
   const fetchConnectedChannels = async () => {
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
@@ -125,7 +133,67 @@ function IntegrationsContent() {
 
   useEffect(() => {
     fetchConnectedChannels();
-  }, []);
+
+    if (setupSessionParam) {
+      const p = (searchParams.get("platform")?.toUpperCase() as "META" | "GOOGLE") || "META";
+      setAdPlatform(p);
+      setSetupSessionId(setupSessionParam);
+      setShowAddAdAccountModal(true);
+
+      fetch(`http://localhost:4000/api/v1/adspend/setup-session/${setupSessionParam}`)
+        .then((res) => res.json())
+        .then((json) => {
+          if (json.success && json.data?.accounts) {
+            setAccessibleAccounts(json.data.accounts);
+            if (json.data.accounts.length > 0) {
+              setSelectedAccountId(json.data.accounts[0].id);
+              setInputAccountName(json.data.accounts[0].name);
+            }
+          }
+        })
+        .catch(() => console.warn("Failed to fetch setup session accounts"));
+    }
+  }, [setupSessionParam, searchParams]);
+
+  const handleStartMetaOAuth = async () => {
+    setIsOAuthLoading(true);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const res = await fetch("http://localhost:4000/api/v1/adspend/oauth/meta/url", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const json = await res.json();
+      if (json.success && json.url) {
+        window.location.href = json.url;
+      } else {
+        alert("Failed to initiate Meta OAuth consent URL");
+      }
+    } catch {
+      alert("Error initiating Meta OAuth consent URL");
+    } finally {
+      setIsOAuthLoading(false);
+    }
+  };
+
+  const handleStartGoogleOAuth = async () => {
+    setIsOAuthLoading(true);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const res = await fetch("http://localhost:4000/api/v1/adspend/oauth/google/url", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const json = await res.json();
+      if (json.success && json.url) {
+        window.location.href = json.url;
+      } else {
+        alert("Failed to initiate Google Ads OAuth consent URL");
+      }
+    } catch {
+      alert("Error initiating Google Ads OAuth consent URL");
+    } finally {
+      setIsOAuthLoading(false);
+    }
+  };
 
   const planInfo = TIER_LIMITS[activePlanTier] || TIER_LIMITS.GROWTH;
   const isUnlimited = planInfo.limit >= 999;
@@ -242,7 +310,8 @@ function IntegrationsContent() {
 
   const handleAddAdAccount = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputAdAccountId) return;
+    const targetAccountId = useManualInput ? inputAdAccountId.trim() : selectedAccountId;
+    if (!targetAccountId && !setupSessionId) return;
 
     try {
       const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
@@ -254,16 +323,19 @@ function IntegrationsContent() {
         },
         body: JSON.stringify({
           platform: adPlatform,
-          adAccountId: inputAdAccountId.trim(),
-          accountName: inputAccountName.trim() || `${adPlatform} Ad Account (${inputAdAccountId.trim()})`
+          adAccountId: targetAccountId || undefined,
+          accountName: inputAccountName.trim() || `${adPlatform} Ad Account (${targetAccountId})`,
+          setupSessionId: setupSessionId || undefined
         })
       });
 
       if (response.ok) {
-        setSyncMessage(`Connected ${adPlatform} Ad Account (${inputAdAccountId.trim()}) successfully!`);
+        setSyncMessage(`Connected ${adPlatform} Ad Account successfully!`);
         setShowAddAdAccountModal(false);
         setInputAdAccountId("");
         setInputAccountName("");
+        setSetupSessionId(null);
+        setAccessibleAccounts([]);
         await fetchConnectedChannels();
       } else {
         const errorJson = await response.json().catch(() => null);
@@ -717,18 +789,26 @@ function IntegrationsContent() {
                 Link Merchant Ad Account
               </h3>
               <button
-                onClick={() => setShowAddAdAccountModal(false)}
+                onClick={() => {
+                  setShowAddAdAccountModal(false);
+                  setSetupSessionId(null);
+                  setAccessibleAccounts([]);
+                  setUseManualInput(false);
+                }}
                 className="p-1 rounded-lg bg-slate-900 text-slate-400 hover:text-white"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <form onSubmit={handleAddAdAccount} className="space-y-4">
+            <div className="space-y-5">
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={() => setAdPlatform("META")}
+                  onClick={() => {
+                    setAdPlatform("META");
+                    setAccessibleAccounts([]);
+                  }}
                   className={`p-4 rounded-2xl border text-center transition-all ${
                     adPlatform === "META"
                       ? "border-blue-500 bg-blue-500/10 text-white font-bold"
@@ -743,7 +823,10 @@ function IntegrationsContent() {
 
                 <button
                   type="button"
-                  onClick={() => setAdPlatform("GOOGLE")}
+                  onClick={() => {
+                    setAdPlatform("GOOGLE");
+                    setAccessibleAccounts([]);
+                  }}
                   className={`p-4 rounded-2xl border text-center transition-all ${
                     adPlatform === "GOOGLE"
                       ? "border-rose-500 bg-rose-500/10 text-white font-bold"
@@ -757,41 +840,132 @@ function IntegrationsContent() {
                 </button>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  {adPlatform === "META" ? "Meta Ad Account ID (e.g. act_10203040)" : "Google Ads Customer ID (e.g. 123-456-7890)"}
-                </label>
-                <input
-                  type="text"
-                  value={inputAdAccountId}
-                  onChange={(e) => setInputAdAccountId(e.target.value)}
-                  placeholder={adPlatform === "META" ? "act_10203040" : "123-456-7890"}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
-                  required
-                />
-              </div>
+              {accessibleAccounts.length > 0 ? (
+                <form onSubmit={handleAddAdAccount} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      Select Accessible Ad Account for this Store:
+                    </label>
+                    <select
+                      value={selectedAccountId}
+                      onChange={(e) => {
+                        setSelectedAccountId(e.target.value);
+                        const selectedObj = accessibleAccounts.find((a) => a.id === e.target.value);
+                        if (selectedObj) setInputAccountName(selectedObj.name);
+                      }}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                    >
+                      {accessibleAccounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.name} ({acc.id}) {acc.currency ? `[${acc.currency}]` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Account Display Name (Optional)</label>
-                <input
-                  type="text"
-                  value={inputAccountName}
-                  onChange={(e) => setInputAccountName(e.target.value)}
-                  placeholder={adPlatform === "META" ? "US Meta Prospecting Account" : "US Google Shopping Account"}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Account Display Name</label>
+                    <input
+                      type="text"
+                      value={inputAccountName}
+                      onChange={(e) => setInputAccountName(e.target.value)}
+                      placeholder="e.g. US Prospecting Campaign"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
 
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  className="w-full py-3 px-4 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-500/20 transition-all flex items-center justify-center gap-2"
-                >
-                  <Check className="h-4 w-4" />
-                  <span>Link {adPlatform} Ad Account</span>
-                </button>
-              </div>
-            </form>
+                  <div className="pt-2">
+                    <button
+                      type="submit"
+                      className="w-full py-3 px-4 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-500/20 transition-all flex items-center justify-center gap-2"
+                    >
+                      <Check className="h-4 w-4" />
+                      <span>Link Selected {adPlatform} Account</span>
+                    </button>
+                  </div>
+                </form>
+              ) : !useManualInput ? (
+                <div className="space-y-4 text-center py-2">
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Connect your {adPlatform === "META" ? "Meta Ads Manager" : "Google Ads Account"} via official OAuth consent.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={adPlatform === "META" ? handleStartMetaOAuth : handleStartGoogleOAuth}
+                    disabled={isOAuthLoading}
+                    className={`w-full py-3.5 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg ${
+                      adPlatform === "META"
+                        ? "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20"
+                        : "bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20"
+                    }`}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    <span>
+                      {isOAuthLoading
+                        ? "Opening Consent Prompt..."
+                        : adPlatform === "META"
+                        ? "Continue with Meta Ads"
+                        : "Sign in with Google Ads"}
+                    </span>
+                  </button>
+
+                  <div className="pt-2 border-t border-slate-800/80">
+                    <button
+                      type="button"
+                      onClick={() => setUseManualInput(true)}
+                      className="text-[11px] text-slate-400 hover:text-indigo-400 underline transition-all"
+                    >
+                      Or connect via Sandbox / Developer Account ID
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleAddAdAccount} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      {adPlatform === "META" ? "Meta Ad Account ID (e.g. act_10203040)" : "Google Ads Customer ID (e.g. 123-456-7890)"}
+                    </label>
+                    <input
+                      type="text"
+                      value={inputAdAccountId}
+                      onChange={(e) => setInputAdAccountId(e.target.value)}
+                      placeholder={adPlatform === "META" ? "act_10203040" : "123-456-7890"}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Account Display Name (Optional)</label>
+                    <input
+                      type="text"
+                      value={inputAccountName}
+                      onChange={(e) => setInputAccountName(e.target.value)}
+                      placeholder={adPlatform === "META" ? "US Meta Prospecting Account" : "US Google Shopping Account"}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="pt-2 flex flex-col gap-2">
+                    <button
+                      type="submit"
+                      className="w-full py-3 px-4 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-500/20 transition-all flex items-center justify-center gap-2"
+                    >
+                      <Check className="h-4 w-4" />
+                      <span>Link {adPlatform} Ad Account</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setUseManualInput(false)}
+                      className="text-[11px] text-slate-400 hover:text-white transition-all text-center pt-1"
+                    >
+                      ← Back to Official OAuth Sign-in
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
           </div>
         </div>
       )}
