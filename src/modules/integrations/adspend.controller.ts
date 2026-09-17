@@ -79,9 +79,13 @@ export class AdSpendController {
         }
       });
 
-      // Auto-trigger initial ad spend sync for this account
+      // Auto-trigger initial ad spend sync for this account safely
       if (cleanPlatform === "META") {
-        await MetaAdsService.syncTenantAdSpend(req.context.tenantId, cleanAccountId);
+        try {
+          await MetaAdsService.syncTenantAdSpend(req.context.tenantId, cleanAccountId);
+        } catch (syncErr) {
+          console.warn(`[AdSpendController] Initial sync warning for ${cleanAccountId}:`, syncErr);
+        }
       }
 
       res.status(200).json({

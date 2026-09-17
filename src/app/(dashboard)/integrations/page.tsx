@@ -266,10 +266,11 @@ function IntegrationsContent() {
         setInputAccountName("");
         await fetchConnectedChannels();
       } else {
-        alert("Failed to connect ad account.");
+        const errorJson = await response.json().catch(() => null);
+        alert(errorJson?.message || errorJson?.error || "Failed to connect ad account.");
       }
     } catch {
-      alert("Error connecting ad account.");
+      alert("Error connecting ad account. Ensure local backend server is running.");
     }
   };
 
