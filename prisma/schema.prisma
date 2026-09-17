@@ -161,7 +161,7 @@ model AdSpendDaily {
   platform    AdPlatform
   adAccountId String
   campaignId  String     @default("") @db.VarChar(255)
-  sku         String     @default("") @db.VarChar(255) // Optional SKU for direct product-level ad attribution
+  sku         String?    @default("") @db.VarChar(255) // Optional SKU for direct product-level ad attribution
   date        DateTime   @db.Date
   spendCents  Int
   currency    String     @db.VarChar(3)
