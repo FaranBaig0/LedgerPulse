@@ -53,7 +53,7 @@ export class AdSpendController {
         return;
       }
 
-      const redirectUri = `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/meta/callback`;
+      const redirectUri = process.env.META_REDIRECT_URI || `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/meta/callback`;
       const { url } = MetaAdsService.getAuthUrl(req.context.tenantId, redirectUri);
 
       res.status(200).json({ success: true, url });
@@ -81,7 +81,7 @@ export class AdSpendController {
       }
 
       const payload = await verifyOAuthStateAsync(String(state));
-      const redirectUri = `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/meta/callback`;
+      const redirectUri = process.env.META_REDIRECT_URI || `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/meta/callback`;
 
       const tokenData = await MetaAdsService.exchangeCodeForLongLivedToken(String(code), redirectUri);
       const accounts = await MetaAdsService.fetchAccessibleAccounts(tokenData.accessToken);
@@ -117,7 +117,7 @@ export class AdSpendController {
         return;
       }
 
-      const redirectUri = `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/google/callback`;
+      const redirectUri = process.env.GOOGLE_ADS_REDIRECT_URI || `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/google/callback`;
       const { url } = GoogleAdsService.getAuthUrl(req.context.tenantId, redirectUri);
 
       res.status(200).json({ success: true, url });
@@ -145,7 +145,7 @@ export class AdSpendController {
       }
 
       const payload = await verifyOAuthStateAsync(String(state));
-      const redirectUri = `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/google/callback`;
+      const redirectUri = process.env.GOOGLE_ADS_REDIRECT_URI || `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/google/callback`;
 
       const tokenData = await GoogleAdsService.exchangeCodeForToken(String(code), redirectUri);
       const accounts = await GoogleAdsService.fetchAccessibleAccounts(tokenData.accessToken);
