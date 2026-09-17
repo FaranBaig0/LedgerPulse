@@ -118,9 +118,10 @@ export class AdSpendController {
       }
 
       const redirectUri = process.env.GOOGLE_ADS_REDIRECT_URI || `${req.protocol}://${req.get("host")}/api/v1/adspend/oauth/google/callback`;
+      console.log(`[GoogleAdsController] Generated OAuth URL with redirectUri: "${redirectUri}"`);
       const { url } = GoogleAdsService.getAuthUrl(req.context.tenantId, redirectUri);
 
-      res.status(200).json({ success: true, url });
+      res.status(200).json({ success: true, url, redirectUri });
     } catch (error) {
       next(error);
     }
