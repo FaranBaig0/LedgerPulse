@@ -147,6 +147,8 @@ export default function AnalyticsDashboardPage() {
   const areaPathGross = `M 0,${svgHeight} L ${pointsGross} L ${svgWidth},${svgHeight} Z`;
   const areaPathProfit = `M 0,${svgHeight} L ${pointsProfit} L ${svgWidth},${svgHeight} Z`;
 
+  const displayAdSpend = summary ? summary.totalAdSpend : 0;
+
   return (
     <div className="space-y-8 max-w-7xl mx-auto">
       {/* Header Section */}
@@ -159,7 +161,7 @@ export default function AnalyticsDashboardPage() {
             </span>
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Real-time multi-tenant contribution margins, true COGS snapshotting, and platform fee breakdown.
+            Real-time multi-tenant contribution margins, true COGS snapshotting, and synced ad spend overhead.
           </p>
         </div>
 
@@ -192,10 +194,10 @@ export default function AnalyticsDashboardPage() {
         </div>
       </div>
 
-      {/* Top 4 Executive Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      {/* Top Executive Metric Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Card 1: True Net Profit */}
-        <div className="glass-card glass-card-hover p-6 rounded-2xl relative overflow-hidden">
+        <div className="glass-card glass-card-hover p-5 rounded-2xl relative overflow-hidden">
           <div className="absolute -right-6 -bottom-6 w-24 h-24 rounded-full bg-emerald-500/10 blur-2xl"></div>
           <div className="flex items-center justify-between text-slate-400 text-xs font-semibold tracking-wider uppercase">
             <span>True Net Profit</span>
@@ -203,68 +205,85 @@ export default function AnalyticsDashboardPage() {
               <TrendingUp className="h-4 w-4" />
             </div>
           </div>
-          <div className="mt-4">
-            <span className="text-3xl font-black tracking-tight gradient-text-emerald">
+          <div className="mt-3">
+            <span className="text-2xl font-black tracking-tight gradient-text-emerald">
               {formatCurrency(displayNetProfit, currency)}
             </span>
           </div>
-          <div className="mt-3 flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
-            <ArrowUpRight className="h-3.5 w-3.5" />
-            <span>Live Account Data</span>
+          <div className="mt-2 flex items-center gap-1 text-[11px] text-emerald-400 font-medium">
+            <ArrowUpRight className="h-3 w-3" />
+            <span>Live Net Profit</span>
           </div>
         </div>
 
         {/* Card 2: True Margin % */}
-        <div className="glass-card glass-card-hover p-6 rounded-2xl relative overflow-hidden">
-          <div className="absolute -right-6 -bottom-6 w-24 h-24 rounded-full bg-indigo-500/10 blur-2xl"></div>
+        <div className="glass-card glass-card-hover p-5 rounded-2xl relative overflow-hidden">
           <div className="flex items-center justify-between text-slate-400 text-xs font-semibold tracking-wider uppercase">
-            <span>True Profit Margin</span>
+            <span>Profit Margin</span>
             <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
               <PieChart className="h-4 w-4" />
             </div>
           </div>
-          <div className="mt-4">
-            <span className="text-3xl font-black tracking-tight text-white">{displayTrueMargin.toFixed(2)}%</span>
+          <div className="mt-3">
+            <span className="text-2xl font-black tracking-tight text-white">{displayTrueMargin.toFixed(2)}%</span>
           </div>
-          <div className="mt-3 flex items-center gap-1.5 text-xs text-indigo-400 font-medium">
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+          <div className="mt-2 flex items-center gap-1 text-[11px] text-indigo-400 font-medium">
+            <CheckCircle2 className="h-3 w-3 text-emerald-400" />
             <span>Contribution Margin</span>
           </div>
         </div>
 
         {/* Card 3: Gross Revenue */}
-        <div className="glass-card glass-card-hover p-6 rounded-2xl relative overflow-hidden">
+        <div className="glass-card glass-card-hover p-5 rounded-2xl relative overflow-hidden">
           <div className="flex items-center justify-between text-slate-400 text-xs font-semibold tracking-wider uppercase">
             <span>Gross Revenue</span>
             <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400">
               <DollarSign className="h-4 w-4" />
             </div>
           </div>
-          <div className="mt-4">
-            <span className="text-3xl font-black tracking-tight text-white">
+          <div className="mt-3">
+            <span className="text-2xl font-black tracking-tight text-white">
               {formatCurrency(displayGrossRevenue, currency)}
             </span>
           </div>
-          <div className="mt-3 flex items-center gap-1.5 text-xs text-slate-400">
-            <ShoppingBag className="h-3.5 w-3.5 text-purple-400" />
-            <span>{displayOrderCount} Account Orders</span>
+          <div className="mt-2 flex items-center gap-1 text-[11px] text-slate-400">
+            <ShoppingBag className="h-3 w-3 text-purple-400" />
+            <span>{displayOrderCount} Orders</span>
           </div>
         </div>
 
-        {/* Card 4: Total COGS & Platform Fees */}
-        <div className="glass-card glass-card-hover p-6 rounded-2xl relative overflow-hidden">
+        {/* Card 4: Synced Total Ad Spend */}
+        <div className="glass-card glass-card-hover p-5 rounded-2xl relative overflow-hidden">
           <div className="flex items-center justify-between text-slate-400 text-xs font-semibold tracking-wider uppercase">
-            <span>Total Deductions</span>
+            <span>Total Ad Spend</span>
+            <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400">
+              <DollarSign className="h-4 w-4" />
+            </div>
+          </div>
+          <div className="mt-3">
+            <span className="text-2xl font-black tracking-tight text-blue-400">
+              {formatCurrency(displayAdSpend, currency)}
+            </span>
+          </div>
+          <div className="mt-2 flex items-center gap-1 text-[11px] text-blue-400 font-medium">
+            <span>Meta & Google Ads</span>
+          </div>
+        </div>
+
+        {/* Card 5: Total COGS & Platform Fees */}
+        <div className="glass-card glass-card-hover p-5 rounded-2xl relative overflow-hidden">
+          <div className="flex items-center justify-between text-slate-400 text-xs font-semibold tracking-wider uppercase">
+            <span>Deductions</span>
             <div className="p-2 rounded-xl bg-rose-500/10 text-rose-400">
               <TrendingDown className="h-4 w-4" />
             </div>
           </div>
-          <div className="mt-4">
-            <span className="text-3xl font-black tracking-tight text-slate-200">
+          <div className="mt-3">
+            <span className="text-2xl font-black tracking-tight text-slate-200">
               {formatCurrency(displayCogs + displayFees, currency)}
             </span>
           </div>
-          <div className="mt-3 text-xs text-slate-400 flex items-center justify-between">
+          <div className="mt-2 text-[11px] text-slate-400 flex items-center justify-between">
             <span>COGS: {formatCurrency(displayCogs, currency)}</span>
             <span className="text-slate-600">•</span>
             <span>Fees: {formatCurrency(displayFees, currency)}</span>
